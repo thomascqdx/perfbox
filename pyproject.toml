@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "perfbox"
+dynamic = ["version"]
+description = "性能分析工具箱宿主"
+requires-python = ">=3.13"
+
+[project.scripts]
+perfbox = "perfbox.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+perfbox = ["catalog.json", "static/**"]
+
+[tool.setuptools.dynamic]
+version = {attr = "perfbox.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not net'"
+markers = [
+    "net: needs network access",
+]

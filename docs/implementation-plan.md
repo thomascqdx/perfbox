@@ -283,7 +283,7 @@ perfbox manifest check <file>   校验一份清单
 
 宿主：
 
-- [ ] 1. 工程骨架：`pyproject.toml`（`src/` 布局，入口 `perfbox = perfbox.cli:main`）、`src/perfbox/__init__.py`、`paths.py`（数据根目录与 `config.json` 读写）、pytest、`.venv`。把搭建、测试、运行命令补进 `AGENTS.md`。
+- [x] 1. 工程骨架：`pyproject.toml`（`src/` 布局，入口 `perfbox = perfbox.cli:main`）、`src/perfbox/__init__.py`、`paths.py`（数据根目录与 `config.json` 读写）、pytest、`.venv`。把搭建、测试、运行命令补进 `AGENTS.md`。
 - [ ] 2. `manifest`：解析、校验、`build_argv`。先写测试，用例直接取自 `tool-manifest.md` 第 9 节。
 - [ ] 3. `sources`：先 `DirSource`，后 `GitHubSource`。
 - [ ] 4. `store`：安装、回退、删除、兼容闸门。

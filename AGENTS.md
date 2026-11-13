@@ -20,6 +20,16 @@ perfbox 是性能分析工具箱的宿主：获取、运行、管理各独立工
 ## 环境
 
 - Windows，Python 3.13（`py -3.13`），虚拟环境放在项目内 `.venv`。
+- 首次搭建：
+
+  ```powershell
+  py -3.13 -m venv .venv
+  .venv\Scripts\python -m pip install -e . -r requirements-dev.txt
+  ```
+
+- 测试：`.venv\Scripts\python -m pytest`。联网冒烟测试标了 `net`，默认跳过，单独跑用 `-m net`。
+- 命令行：`.venv\Scripts\perfbox ...`（如 `perfbox list`、`perfbox run memscope -- -V`）。
+- `PERFBOX_HOME` 可改宿主数据根目录，做实验时指到临时目录，不影响正式数据。
 - 默认 shell 是 Windows PowerShell 5.1：
   - 不支持 `&&`，用 `; if ($?) { ... }`。
   - 不要把含中文的脚本通过管道喂给 `python -`，中文会变成 `?`。先写成 UTF-8 文件再运行。
