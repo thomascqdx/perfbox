@@ -18,6 +18,10 @@ _Avoid_: 框架、平台、壳
 随工具每次发版一起发布的 `perfbox-tool.json`，声明该版本的产物、命令、参数和输出。
 _Avoid_: 配置、描述文件、ToolSpec
 
+**清单模板 (Manifest Template)**:
+签入工具仓库根目录的 `perfbox-tool.json`，版本号和产物信息留空，构建后由 `stamp_manifest.py` 填写成清单。
+_Avoid_: 清单草稿、源清单
+
 **产物 (Artifact)**:
 工具一次发版中供下载运行的那一个文件，是单个 exe 或一个 zip。
 _Avoid_: 安装包、包、二进制

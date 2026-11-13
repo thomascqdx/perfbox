@@ -1,6 +1,6 @@
 # 清单规范：perfbox-tool.json（schema 1）
 
-状态：草案。M1 实现 `perfbox.manifest` 时定稿，定稿后本文件是各工具仓库接入的唯一依据。
+状态：定稿（schema 1），2026-11-13。本文件是各工具仓库接入的唯一依据。
 
 清单随工具每次发版一起发布，文件名固定为 `perfbox-tool.json`。宿主靠它知道：这个版本的产物是哪个文件、怎么校验、有哪些命令、每个命令怎么拼命令行、结果在哪里。术语见仓库根目录 `CONTEXT.md`。
 
@@ -29,6 +29,10 @@
 | `min_perfbox` | string | 否 | 能运行此清单的最低宿主版本 |
 | `artifact` | object | 是 | 见第 3 节 |
 | `commands` | array | 是 | 至少一个，见第 4 节 |
+
+- 版本号（`version`、`min_perfbox`）格式为 `X.Y.Z`，三段都是非负整数，比较时逐段按数字比较。
+- 宿主先检查 `schema` 和 `min_perfbox`，不满足时报「需要升级 perfbox」，不再做其余校验。
+- 其余校验是严格的：出现本规范未定义的字段，清单即无效。schema 1 内以后新增可选字段时，用到新字段的清单必须同时声明对应的 `min_perfbox`，旧宿主会先被 `min_perfbox` 拦下，而不是报「未定义的字段」。
 
 ## 3. artifact
 
@@ -120,6 +124,21 @@
 
 `boolean` 必须带 `flag`：勾选时传该选项，不勾选时什么都不传。
 
+「未改动」的判定：参数值缺失、为 `null`、为空字符串、为空列表、`boolean` 为 `false`，或与 `default` 相等，都视为未改动，不传给工具。
+
+参数值的形态（界面提交给宿主的 JSON 值）：
+
+| `type` | 单值 | `multiple` / `count` |
+|---|---|---|
+| `path`、`string` | 字符串，原样传递 | 字符串数组 |
+| `number` | 数字，或可解析为数字的字符串 | 同左的数组 |
+| `integer` | 整数，或可解析为整数的字符串 | 同左的数组 |
+| `boolean` | `true` / `false` | 不允许 |
+| `choice` | `choices` 中的一个 | `choices` 中的值组成的数组 |
+
+- `multiple` 与 `count` 不能同时出现。`count` 必须恰好给出 `count` 个值；`multiple` 至少一个。
+- 宿主不检查路径是否存在，路径原样交给工具，相对路径按工作目录解析。
+
 ## 6. 命令行拼装
 
 宿主按下面的顺序拼出完整命令行，各段之间不做任何 shell 解析：
@@ -144,8 +163,15 @@ entry  +  args  +  位置参数（按 params 中的顺序）  +  选项参数（
 
 ## 8. 仓库内的清单与发版
 
-- 仓库根目录签入 `perfbox-tool.json`，其中 `version`、`tag`、`artifact.name`、`artifact.size`、`artifact.sha256` 留空。
-- 构建产物后运行 `scripts/stamp_manifest.py`（从 perfbox 仓库的 `tools/` 拷贝，只依赖标准库），由它读取版本号和产物文件，写出 `dist/perfbox-tool.json`。
+- 仓库根目录签入 `perfbox-tool.json`（称为清单模板），其中 `version`、`tag`、`artifact.name`、`artifact.sha256` 写空字符串 `""`，`artifact.size` 写 `0`。其余字段照常填写；`exe` 产物不写 `entry`。
+- 构建产物后运行 `scripts/stamp_manifest.py`（从 perfbox 仓库的 `tools/` 拷贝，只依赖标准库），由它读取版本号和产物文件，写出 `dist/perfbox-tool.json`：
+
+  ```
+  python scripts/stamp_manifest.py --version-from <含 __version__ 或 VERSION 的文件> --artifact <产物路径> [--template perfbox-tool.json] [--out dist/perfbox-tool.json]
+  ```
+
+  它填入 `version`、`tag`（`v<version>`）、`artifact.name`（产物文件名）、`artifact.size`、`artifact.sha256`，其余内容原样保留。也可以用 `--version X.Y.Z` 直接给出版本号。
+- `perfbox manifest check <file>` 校验一份发布用的清单；`perfbox manifest check --template <file>` 校验清单模板（允许上述五个字段为空）。
 - 发版时把产物和 `dist/perfbox-tool.json` 一起上传为 release 附件。
 - 每个工具仓库加一个契约测试：清单里出现的每个 `flag` 和 `args` 中的子命令，都必须存在于工具的 argparse 定义中。
 
