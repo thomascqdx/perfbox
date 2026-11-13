@@ -293,14 +293,14 @@ perfbox manifest check <file>   校验一份清单
 
 工具侧：
 
-- [ ] 8. memscope：加 `perfbox-tool.json`、`scripts/stamp_manifest.py`、契约测试；构建脚本在产物生成后调用 stamp。
-- [ ] 9. perfetto-trim：同上。
-- [ ] 10. 为 memscope v0.8.1 和 perfetto-trim v1.3.0 的现有 release 补传清单，然后推送两个仓库的接入提交。做法见 5.2 节。
+- [x] 8. memscope：加 `perfbox-tool.json`、`scripts/stamp_manifest.py`、契约测试；构建脚本在产物生成后调用 stamp。
+- [x] 9. perfetto-trim：同上。
+- [x] 10. 为 memscope v0.8.1 和 perfetto-trim v1.3.0 的现有 release 补传清单，然后推送两个仓库的接入提交。做法见 5.2 节。
 
 验证点（见第 7 节）：
 
-- [ ] 11. 实测 memscope 和 perfetto-trim 在管道下的输出编码，结论写进第 7 节。
-- [ ] 12. 准备「同事机器杀毒软件」和「公司网络访问 GitHub」两项验证的操作步骤，记入第 11 节，不等结果。
+- [x] 11. 实测 memscope 和 perfetto-trim 在管道下的输出编码，结论写进第 7 节。
+- [x] 12. 准备「同事机器杀毒软件」和「公司网络访问 GitHub」两项验证的操作步骤，记入第 11 节，不等结果。
 
 验收：
 
@@ -469,6 +469,24 @@ vmscope、meminfo_diff、jank-100ms-analysis、dynamic_model_tools 四个仓库�
 | 超长路径或 UNC 路径 | M4 | 宿主原样传递路径；任务标识保持简短 |
 | 工作目录是下载目录之类的地方，结果散落 | M5 | README 说明结果位置；界面始终显示工作目录和每个任务的结果目录 |
 
+### 7.1 管道输出编码实测（M1，2026-11-13）
+
+在中文 Windows（ANSI 代码页 936）上，把已发布的 `memscope-0.8.1.exe` 和 `perfetto-trim.exe`（1.3.0）的 stdout/stderr 重定向到管道，取原始字节：
+
+| 工具与命令 | 编码 | 实时性 |
+|---|---|---|
+| memscope `--help`、`static compare` | cp936，不是 UTF-8（如 stderr 第 38 字节 `0xbc`） | 进度在 stderr，逐行到达；stdout 的结尾几行进程退出时才到 |
+| memscope `-V` | 纯 ASCII | — |
+| perfetto-trim `--help` | cp936 | — |
+| perfetto-trim `ui --no-browser` | 就绪行 `已启动：` 是 GBK 字节，URL 部分是 ASCII | 约 1 秒内到达（`flush=True`） |
+
+结论：
+
+- 两个工具在管道下都按系统代码页输出，不满足 `tool-manifest.md` 第 7 节第 5 条。原因：memscope 的 `cli.main()` 只做了 `reconfigure(errors='replace')`，没有指定 `encoding`；perfetto-trim 没有做 reconfigure。
+- 已发布的 exe 不重新构建（5.2 节），所以**宿主必须兼容**：jobs 读日志时按行解码，先试 UTF-8，失败则用系统 ANSI 代码页（`locale.getencoding()`），再失败才用 `errors='replace'`。M2 的 jobs 测试要覆盖 UTF-8、GBK 和非法字节三种行。
+- `ready.url_regex` 只匹配 ASCII 部分，不受编码影响。
+- 工具侧的修正（memscope 补 `encoding='utf-8'`，perfetto-trim 在 `main()` 里加同样的 reconfigure）随各自下一次正常发版进行，不为此单独发版。M4 接入的工具在接入时一并检查。
+
 ## 8. git 管理
 
 **本仓库**
@@ -516,7 +534,33 @@ vmscope、meminfo_diff、jank-100ms-analysis、dynamic_model_tools 四个仓库�
 
 执行过程中把需要用户本人完成的验证记在这里，每项写明操作步骤和期望结果。
 
-（暂无）
+### 11.1 同事机器上的杀毒软件（M1 准备）
+
+目的：确认程序下载的未签名 exe 不会被公司杀毒软件拦截或隔离。
+
+1. 在一台装有公司标准杀毒软件的同事机器上，从 `https://github.com/thomascqdx/perfbox/releases/latest` 下载 `perfbox.exe`（M5 之前可改用源码：`pip install` 后用 `perfbox` 命令）。
+2. 新建一个空目录，例如 `D:\pbtest`，在其中打开命令行，执行 `perfbox run memscope -- -V`。
+3. 再执行 `perfbox run perfetto-trim -- --version`。
+4. 打开杀毒软件的隔离区和事件日志，查看这段时间的记录。
+
+期望：两条命令分别打印 `memscope 0.8.1` 和 `perfetto-trim 1.3.0`；`%LOCALAPPDATA%\perfbox\tools\` 下有两个工具的版本目录，exe 未被删除；杀毒软件没有拦截、隔离或弹窗记录。
+
+如果被拦截：记下杀毒软件名称和提示原文。应对方案是同事一律使用共享盘目录源（`perfbox export` 导出，在 config.json 中配置 `{"type": "dir", "path": "\\\\..."}`），并向 IT 申请对该共享目录加白。
+
+### 11.2 公司网络访问 GitHub（M1 准备）
+
+目的：确认公司网络下 GitHub 源可用，以及不可用时的表现可接受。
+
+1. 在公司网络下（不开个人代理），用一个空的数据目录：`set PERFBOX_HOME=%TEMP%\pb-net`，然后执行 `perfbox list`，记下耗时。
+2. 执行 `perfbox install memscope`，观察下载进度和总耗时。
+3. 如果公司有 HTTP 代理，在 `%PERFBOX_HOME%\config.json` 中写入 `{"proxy": "http://<公司代理>:<端口>"}`，重复第 2 步。
+4. 装好后拔网线或断开 Wi-Fi，执行 `perfbox run memscope -- -V`。
+
+期望：第 1 步在 1 分钟内结束，每个工具显示版本号或「检查失败」，不会卡住；第 2 步（或第 3 步）安装成功；第 4 步立即打印版本号，不出现网络错误。
+
+如果第 2、3 步都失败：记下错误原文。应对方案同 11.1，主推共享盘目录源。
+
+参考：本机测试时，不经代理直连 GitHub 下载 10 MB 的产物在约 50% 处超时；经代理一次成功，约 35 秒。
 
 ## 附录 A 各工具的命令与参数
 
