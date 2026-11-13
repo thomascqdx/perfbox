@@ -14,8 +14,8 @@ from perfbox.jobs import Jobs
 from perfbox.server import Host, create_server
 from perfbox.sources import DirSource
 
-from helpers import publish
-from test_jobs import make_tool
+from helpers import entry_of, publish
+from test_jobs import make_app_tool, make_tool
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def env(tmp_path, monkeypatch):
     src = tmp_path / "dirsrc"
     src.mkdir()
     j = Jobs(home, workdir)
-    host = Host(workdir, jobs=j,
+    host = Host(workdir, jobs=j, check_updates=False,
                 sources_fn=lambda: [DirSource(src)])
     srv, host = create_server(0, host)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
@@ -142,7 +142,8 @@ def test_state_config_error(tmp_path, monkeypatch):
     workdir = tmp_path / "work"
     workdir.mkdir()
     j = Jobs(home, workdir)
-    host = Host(workdir, jobs=j, sources_fn=lambda: [])
+    host = Host(workdir, jobs=j, check_updates=False,
+                sources_fn=lambda: [])
     srv, host = create_server(0, host)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -256,7 +257,8 @@ def test_post_job_unwritable_workdir(tmp_path, monkeypatch):
     blocker.write_text("x")
     monkeypatch.setenv("PERFBOX_HOME", str(home))
     j = Jobs(home, blocker)
-    host = Host(blocker, jobs=j, sources_fn=lambda: [])
+    host = Host(blocker, jobs=j, check_updates=False,
+                sources_fn=lambda: [])
     srv, host = create_server(0, host)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
@@ -351,3 +353,321 @@ def test_reveal(env, monkeypatch):
     st, body, _ = _req(host, "POST", "/api/reveal",
                        {"job": "nope", "path": "x"})
     assert st == 404
+
+
+# ------------------------------------------------------- M3：状态字段
+
+def test_state_m3_fields(env):
+    host = env[0]
+    st, j, _ = _req(host, "GET", "/api/state")
+    assert st == 200
+    assert "checked" in j and "checking" in j
+    t = {t["id"]: t for t in j["tools"]}["memscope"]
+    for k in ("previous", "latest", "update", "incompatible", "op", "app"):
+        assert k in t
+    assert t["update"] is None and t["op"] is None and t["app"] is None
+
+
+def test_updates_check_endpoint(env):
+    host, src, _ = env
+    publish(src, "memscope", "3.3.3", body=b"E")
+    st, j, _ = _req(host, "POST", "/api/updates/check", {})
+    assert st == 200
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        st, j, _ = _req(host, "GET", "/api/state")
+        if not j["checking"] and j["checked"] > 0:
+            break
+        time.sleep(0.1)
+    t = {t["id"]: t for t in j["tools"]}["memscope"]
+    assert t["latest"] == "3.3.3"
+    assert t["update"] is None          # 未安装 → 不算"可更新"
+
+
+def test_state_update_flag(env):
+    host, src, _ = env
+    publish(src, "memscope", "1.0.0", body=b"v1")
+    store.install(entry_of(), [DirSource(src)])
+    publish(src, "memscope", "2.0.0", body=b"v2")
+    host.recheck_updates(force=True)
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        st, j, _ = _req(host, "GET", "/api/state")
+        if not j["checking"] and j["checked"] > 0:
+            break
+        time.sleep(0.1)
+    t = {t["id"]: t for t in j["tools"]}["memscope"]
+    assert t["installed"] == "1.0.0"
+    assert t["latest"] == "2.0.0" and t["update"] == "2.0.0"
+
+
+# ------------------------------------------------------- M3：安装操作
+
+def _wait_op(host, tid, timeout=20):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        st, d, _ = _req(host, "GET", "/api/ops")
+        assert st == 200
+        op = d["ops"].get(tid)
+        if op is not None and op["finished"]:
+            return op
+        time.sleep(0.05)
+    raise AssertionError("op timeout")
+
+
+def test_install_op_flow(env):
+    host, src, _ = env
+    publish(src, "memscope", "2.0.0", body=b"EXE")
+    st, op, _ = _req(host, "POST", "/api/tools/memscope/install", {})
+    assert st == 202
+    assert op["kind"] == "install" and op["finished"] is False
+    op = _wait_op(host, "memscope")
+    assert op["error"] is None
+    inst = store.installed("memscope")
+    assert inst is not None and inst.version == "2.0.0"
+    st, j, _ = _req(host, "GET", "/api/state")
+    t = {t["id"]: t for t in j["tools"]}["memscope"]
+    assert t["installed"] == "2.0.0"
+    assert t["latest"] == "2.0.0"       # 装完缓存条目已刷新
+
+
+def test_install_op_progress(env, monkeypatch):
+    host = env[0]
+
+    def fake_install(entry, srcs, progress=None):
+        if progress:
+            progress(5, 10)
+        return make_tool()
+
+    monkeypatch.setattr(store, "install", fake_install)
+    st, op, _ = _req(host, "POST", "/api/tools/memscope/update", {})
+    assert st == 202 and op["kind"] == "update"
+    op = _wait_op(host, "memscope")
+    assert op["done"] == 5 and op["total"] == 10
+
+
+def test_install_op_double_409(env, monkeypatch):
+    host = env[0]
+    ev = threading.Event()
+
+    def slow(entry, srcs, progress=None):
+        ev.wait(10)
+        return make_tool()
+
+    monkeypatch.setattr(store, "install", slow)
+    st, op, _ = _req(host, "POST", "/api/tools/memscope/install", {})
+    assert st == 202
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/install", {})
+    assert st == 409
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/update", {})
+    assert st == 409
+    ev.set()
+    _wait_op(host, "memscope")
+
+
+def test_install_op_unknown_tool(env):
+    host = env[0]
+    st, j, _ = _req(host, "POST", "/api/tools/nope/install", {})
+    assert st == 404
+
+
+def test_install_op_incompatible(env):
+    host, src, _ = env
+    publish(src, "memscope", "9.9.9",
+            manifest_extra={"schema": 2})
+    st, op, _ = _req(host, "POST", "/api/tools/memscope/install", {})
+    assert st == 202
+    op = _wait_op(host, "memscope")
+    assert op["error"] and "perfbox" in op["error"]
+    assert store.installed("memscope") is None   # 旧版本不受影响
+
+
+# ------------------------------------------------------- M3：回退/卸载
+
+def test_rollback(env):
+    home_src = env[1]
+    host = env[0]
+    publish(home_src, "memscope", "1.0.0", body=b"v1")
+    store.install(entry_of(), [DirSource(home_src)])
+    publish(home_src, "memscope", "1.1.0", body=b"v2")
+    store.install(entry_of(), [DirSource(home_src)])
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/rollback", {})
+    assert st == 200 and j["installed"] == "1.0.0"
+    assert store.installed("memscope").version == "1.0.0"
+
+
+def test_rollback_no_previous_409(env):
+    host = env[0]
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/rollback", {})
+    assert st == 409
+
+
+def test_remove_tool(env):
+    host, src, _ = env
+    publish(src, "memscope", "1.0.0", body=b"v1")
+    store.install(entry_of(), [DirSource(src)])
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/remove", {})
+    assert st == 200 and j["removed"] == "memscope"
+    assert store.installed("memscope") is None
+
+
+def test_remove_refused_while_job_running(env, monkeypatch):
+    host = env[0]
+    monkeypatch.setattr(store, "installed", lambda tid: make_tool())
+    job = _post_job(env, "sleep=30,nofiles=1")
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        st, j, _ = _req(host, "GET", f"/api/jobs/{job['id']}")
+        if j["state"] == "running":
+            break
+        time.sleep(0.05)
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/remove", {})
+    assert st == 409 and "先停止" in j["error"]
+    _req(host, "POST", f"/api/jobs/{job['id']}/cancel", {})
+
+
+def test_remove_refused_while_app_running(env, monkeypatch):
+    host = env[0]
+    monkeypatch.setattr(store, "installed",
+                        lambda tid: make_app_tool())
+    st, app, _ = _req(host, "POST", "/api/apps",
+                      {"tool": "memscope", "command": "ui"})
+    assert st == 200
+    st, j, _ = _req(host, "POST", "/api/tools/memscope/remove", {})
+    assert st == 409 and "先停止" in j["error"]
+    _req(host, "POST", "/api/apps/memscope/stop", {})
+
+
+# ------------------------------------------------------- M3：应用
+
+def test_apps_flow(env, monkeypatch):
+    host = env[0]
+    monkeypatch.setattr(store, "installed", lambda tid: make_app_tool())
+    st, app, _ = _req(host, "POST", "/api/apps",
+                      {"tool": "memscope", "command": "ui"})
+    assert st == 200
+    assert app["state"] == "ready" and app["url"].startswith("http://127.")
+    assert "已启动" in app["log"]
+    st, d, _ = _req(host, "GET", "/api/apps")
+    assert st == 200 and [a["tool"] for a in d["apps"]] == ["memscope"]
+    # 同工具再起返回同一实例
+    st, app2, _ = _req(host, "POST", "/api/apps",
+                       {"tool": "memscope", "command": "ui"})
+    assert st == 200 and app2["pid"] == app["pid"]
+    # state 里带 app
+    st, j, _ = _req(host, "GET", "/api/state")
+    t = {t["id"]: t for t in j["tools"]}["memscope"]
+    assert t["app"]["state"] == "ready"
+    st, j, _ = _req(host, "POST", "/api/apps/memscope/stop", {})
+    assert st == 200
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        st, d, _ = _req(host, "GET", "/api/apps")
+        if not d["apps"]:
+            return
+        time.sleep(0.05)
+    raise AssertionError("app 未退出")
+
+
+def test_app_bad_command_400(env, monkeypatch):
+    host = env[0]
+    monkeypatch.setattr(store, "installed", lambda tid: make_tool())
+    st, j, _ = _req(host, "POST", "/api/apps",
+                    {"tool": "memscope", "command": "run"})
+    assert st == 400
+    st, j, _ = _req(host, "POST", "/api/apps",
+                    {"tool": "nope", "command": "ui"})
+    assert st == 400
+
+
+def test_app_install_then_fail_400(env):
+    host, src, _ = env
+    publish(src, "memscope", "1.0.0", body=b"not-an-exe",
+            manifest_extra={"commands": [{
+                "id": "ui", "title": "界面", "kind": "app",
+                "args": ["ui"], "ready": {"url_regex": "http://x"}}]})
+    st, j, _ = _req(host, "POST", "/api/apps",
+                    {"tool": "memscope", "command": "ui"})
+    assert st == 400 and "error" in j
+
+
+# ------------------------------------------------------- M3：配置
+
+def test_config_get_default(env):
+    host = env[0]
+    st, cfg, _ = _req(host, "GET", "/api/config")
+    assert st == 200
+    assert cfg["path"].endswith("config.json")
+    assert cfg["sources"] == [{"type": "github"}]
+    assert cfg["proxy"] is None
+    assert cfg["max_parallel_jobs"] == 1
+    assert cfg["error"] is None
+
+
+def test_config_roundtrip(env):
+    host, src, _ = env
+    st, cfg, _ = _req(host, "POST", "/api/config", {
+        "sources": [{"type": "dir", "path": str(src)}],
+        "proxy": "http://127.0.0.1:7890",
+        "max_parallel_jobs": 3})
+    assert st == 200
+    assert cfg["max_parallel_jobs"] == 3
+    assert cfg["restart_needed"] is True
+    st, cfg, _ = _req(host, "GET", "/api/config")
+    assert cfg["sources"] == [{"type": "dir", "path": str(src)}]
+    assert cfg["proxy"] == "http://127.0.0.1:7890"
+    assert cfg["max_parallel_jobs"] == 3
+    # 并发数已保存为 3，但运行中仍是 1 → 仍提示需要重启
+    st, cfg, _ = _req(host, "POST", "/api/config",
+                      {"sources": [{"type": "github"}]})
+    assert st == 200 and cfg["restart_needed"] is True
+    # 改回与运行中一致的值 → 无需重启
+    st, cfg, _ = _req(host, "POST", "/api/config",
+                      {"max_parallel_jobs": 1})
+    assert st == 200 and "restart_needed" not in cfg
+
+
+def test_config_invalid_400(env):
+    host = env[0]
+    st, j, _ = _req(host, "POST", "/api/config",
+                    {"max_parallel_jobs": 0})
+    assert st == 400 and "error" in j
+    st, j, _ = _req(host, "POST", "/api/config",
+                    {"sources": [{"type": "bogus"}]})
+    assert st == 400
+    st, j, _ = _req(host, "POST", "/api/config",
+                    {"sources": "notalist"})
+    assert st == 400
+
+
+def test_config_invalid_file_returns_defaults(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text("{bad", encoding="utf-8")
+    monkeypatch.setenv("PERFBOX_HOME", str(home))
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    j = Jobs(home, workdir)
+    host = Host(workdir, jobs=j, check_updates=False,
+                sources_fn=lambda: [])
+    srv, host = create_server(0, host)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        st, cfg, _ = _req(host, "GET", "/api/config")
+        assert st == 200
+        assert cfg["error"]
+        assert cfg["max_parallel_jobs"] == 1
+        assert cfg["sources"] == [{"type": "github"}]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        j.shutdown()
+
+
+def test_tool_manifest_incompatible_409(env):
+    host, src, _ = env
+    publish(src, "memscope", "9.9.9",
+            manifest_extra={"schema": 2})
+    st, j, _ = _req(host, "GET", "/api/tools/memscope")
+    assert st == 409 and "perfbox" in j["error"]

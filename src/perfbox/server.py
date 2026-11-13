@@ -20,10 +20,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import perfbox
-from perfbox import catalog, paths, sources, store
+from perfbox import catalog, manifest, paths, sources, store, updates
 from perfbox.catalog import UnknownTool
 from perfbox.jobs import Jobs, JobError, JobNotFound
-from perfbox.manifest import ManifestError, ParamError
+from perfbox.manifest import (IncompatibleManifest, ManifestError,
+                              ParamError, version_tuple)
 from perfbox.paths import ConfigError
 from perfbox.sources import SourceError
 from perfbox.store import StoreError
@@ -116,7 +117,7 @@ class Host:
     """应用状态：工作目录、任务系统、token、可注入的系统交互。"""
 
     def __init__(self, workdir: Path, jobs: Jobs | None = None,
-                 sources_fn=None):
+                 sources_fn=None, check_updates: bool = True):
         self.workdir = Path(workdir)
         self.token = secrets.token_urlsafe(24)
         self.port = 0
@@ -126,6 +127,7 @@ class Host:
         except Exception as e:  # noqa: BLE001 - 坏了也要能起界面
             cfg = None
             self.config_error = str(e)
+        self._cfg = cfg or paths.Config()
         self._sources_fn = sources_fn or \
             (lambda: sources.configured(paths.load_config()))
         if jobs is None:
@@ -134,6 +136,12 @@ class Host:
         self.jobs = jobs
         self.pick = _tk_pick
         self.reveal = _explorer_reveal
+        self._op_lock = threading.Lock()
+        self._ops = {}                    # tool_id -> 操作进度 dict
+        self._checking = False
+        self._cache = updates.read_cache(paths.home())
+        if check_updates:
+            self.recheck_updates()
 
     def tool_manifest(self, tool_id: str) -> dict:
         entry = catalog.get(tool_id)
@@ -156,6 +164,12 @@ class Host:
                     m = json.loads(raw)
                 except ValueError as e:
                     raise ApiError(f"清单不是合法 JSON：{e}", 502) from e
+                try:
+                    manifest.parse(raw)
+                except IncompatibleManifest as e:
+                    raise ApiError(str(e), 409) from e
+                except ManifestError as e:
+                    raise ApiError(f"清单无效：{e}", 502) from e
                 return {"id": tool_id, "installed": None, "manifest": m}
         detail = f"（{'；'.join(errors)}）" if errors else ""
         raise ApiError(f"源上没有 {tool_id} 的清单{detail}", 404)
@@ -167,20 +181,194 @@ class Host:
         except Exception as e:  # noqa: BLE001
             labels = []
             err = self.config_error or str(e)
+        cache = self._cache
+        cache_tools = cache.get("tools", {})
+        live_apps = {a.tool: a.to_dict() for a in self.jobs.apps()}
         tools = []
         for e in catalog.entries():
             try:
                 inst = store.installed(e.id)
             except Exception:  # noqa: BLE001 - 单个工具坏了不拖垮全部
                 inst = None
+            ce = cache_tools.get(e.id, {})
+            latest = ce.get("latest")
+            update = None
+            if inst is not None and latest:
+                try:
+                    if version_tuple(latest) > version_tuple(inst.version):
+                        update = latest
+                except ValueError:
+                    pass
+            with self._op_lock:
+                op = dict(self._ops[e.id]) if e.id in self._ops else None
             tools.append({"id": e.id, "title": e.title,
                           "summary": e.summary, "domain": e.domain,
-                          "installed": inst.version if inst else None})
+                          "installed": inst.version if inst else None,
+                          "previous": store.previous_version(e.id),
+                          "latest": latest, "update": update,
+                          "incompatible": ce.get("incompatible"),
+                          "op": op,
+                          "app": live_apps.get(e.id)})
         d = {"version": perfbox.__version__, "workdir": str(self.workdir),
-             "sources": labels, "domains": _DOMAINS, "tools": tools}
+             "sources": labels, "domains": _DOMAINS, "tools": tools,
+             "checked": cache.get("checked", 0),
+             "checking": self._checking}
         if err:
             d["config_error"] = err
         return d
+
+    # ------------------------------------------------------- 更新检查
+    def recheck_updates(self, force: bool = False) -> None:
+        """后台跑一次更新检查；已在跑则跳过。"""
+        with self._op_lock:
+            if self._checking:
+                return
+            self._checking = True
+
+        def run():
+            try:
+                self._cache = updates.check_all(
+                    catalog.entries(), self._sources_fn(), paths.home(),
+                    force=force)
+            except Exception:  # noqa: BLE001 - 检查失败不影响界面
+                pass
+            finally:
+                with self._op_lock:
+                    self._checking = False
+
+        threading.Thread(target=run, daemon=True,
+                         name="perfbox-updates").start()
+
+    def _refresh_cache_entry(self, tool_id: str, version: str) -> None:
+        """安装/更新成功后把缓存里的最新版本对齐到已装版本。"""
+        home = paths.home()
+        cache = updates.read_cache(home)
+        e = cache["tools"].setdefault(
+            tool_id, {"latest": None, "error": None, "incompatible": None})
+        e.update({"latest": version, "error": None, "incompatible": None})
+        try:
+            updates.write_cache(home, cache)
+        except OSError:
+            pass
+        self._cache = cache
+
+    # ------------------------------------------------------- 安装操作
+    def ops(self) -> dict:
+        with self._op_lock:
+            return {"ops": {t: dict(o) for t, o in self._ops.items()}}
+
+    def start_install_op(self, tool_id: str, kind: str) -> dict:
+        """后台安装/更新一个工具；已有未完成操作返回 409。"""
+        try:
+            entry = catalog.get(tool_id)
+        except UnknownTool as e:
+            raise ApiError(str(e), 404) from e
+        with self._op_lock:
+            cur = self._ops.get(tool_id)
+            if cur is not None and not cur["finished"]:
+                raise ApiError(f"{tool_id} 已有正在进行的操作", 409)
+            op = {"kind": kind, "done": 0, "total": 0,
+                  "error": None, "finished": False}
+            self._ops[tool_id] = op
+
+        def run():
+            try:
+                inst = store.install(entry, self._sources_fn(),
+                                     self._progress(tool_id))
+                self._refresh_cache_entry(tool_id, inst.version)
+            except Exception as e:  # noqa: BLE001 - 错误记在操作上
+                op["error"] = str(e)
+            finally:
+                op["finished"] = True
+
+        threading.Thread(target=run, daemon=True,
+                         name=f"perfbox-op-{tool_id}").start()
+        return dict(op)
+
+    def _progress(self, tool_id: str):
+        def prog(done, total):
+            with self._op_lock:
+                op = self._ops.get(tool_id)
+                if op is not None:
+                    op["done"], op["total"] = done, total
+        return prog
+
+    def rollback_tool(self, tool_id: str) -> dict:
+        try:
+            inst = store.rollback(tool_id)
+        except StoreError as e:
+            raise ApiError(str(e), 409) from e
+        return {"installed": inst.version}
+
+    def remove_tool(self, tool_id: str) -> dict:
+        for a in self.jobs.apps():
+            if a.tool == tool_id:
+                raise ApiError(
+                    f"{tool_id} 的应用正在运行，请先停止它再卸载", 409)
+        for j in self.jobs.history():
+            if j.tool == tool_id and j.state in ("queued", "running"):
+                raise ApiError(
+                    f"{tool_id} 有任务在排队或运行中，请先停止它再卸载",
+                    409)
+        try:
+            store.remove(tool_id)
+        except StoreError as e:
+            raise ApiError(str(e), 409) from e
+        return {"removed": tool_id}
+
+    # ------------------------------------------------------- 应用
+    def start_app(self, body: dict) -> dict:
+        tool_id = body.get("tool")
+        command = body.get("command")
+        if not isinstance(tool_id, str) or not tool_id:
+            raise ApiError("缺少 tool")
+        if not isinstance(command, str) or not command:
+            raise ApiError("缺少 command")
+        try:
+            entry = catalog.get(tool_id)
+            inst = store.installed(tool_id)
+            if inst is None:
+                inst = store.install(entry, self._sources_fn())
+            app = self.jobs.start_app(inst, command)
+        except _SUBMIT_ERRORS as e:
+            raise ApiError(str(e)) from e
+        return app.to_dict()
+
+    # ------------------------------------------------------- 配置
+    def get_config(self) -> dict:
+        path = str(paths.home() / "config.json")
+        try:
+            cfg = paths.load_config()
+        except ConfigError as e:
+            cfg = paths.Config()
+            return {"path": path, "sources": cfg.sources,
+                    "proxy": cfg.proxy,
+                    "max_parallel_jobs": cfg.max_parallel_jobs,
+                    "error": str(e)}
+        return {"path": path, "sources": cfg.sources, "proxy": cfg.proxy,
+                "max_parallel_jobs": cfg.max_parallel_jobs, "error": None}
+
+    def save_config(self, body: dict) -> dict:
+        try:
+            cur = paths.load_config()
+        except ConfigError:
+            cur = paths.Config()
+        data = {"sources": cur.sources, "proxy": cur.proxy,
+                "max_parallel_jobs": cur.max_parallel_jobs}
+        for k in data:
+            if k in body:
+                data[k] = body[k]
+        try:
+            cfg = paths.validate(data)
+        except ValueError as e:
+            raise ApiError(f"配置无效：{e}") from e
+        paths.save_config(cfg)
+        resp = {"path": str(paths.home() / "config.json"),
+                "sources": cfg.sources, "proxy": cfg.proxy,
+                "max_parallel_jobs": cfg.max_parallel_jobs, "error": None}
+        if cfg.max_parallel_jobs != self._cfg.max_parallel_jobs:
+            resp["restart_needed"] = True
+        return resp
 
     def submit_job(self, body: dict):
         tool_id = body.get("tool")
@@ -346,6 +534,33 @@ def make_handler(host: Host):
                 job = host._job(jid)
                 host.jobs.cancel(jid)
                 return self._json(200, job.to_dict())
+            if path == "/api/apps":
+                return self._json(200, host.start_app(self._body()))
+            if path.startswith("/api/apps/") and path.endswith("/stop"):
+                tid = urllib.parse.unquote(
+                    path[len("/api/apps/"):-len("/stop")])
+                host.jobs.stop_app(tid)
+                return self._json(200, {"ok": True})
+            if path == "/api/config":
+                return self._json(200, host.save_config(self._body()))
+            if path == "/api/updates/check":
+                host.recheck_updates(force=True)
+                return self._json(200, {"checking": True})
+            if path.startswith("/api/tools/"):
+                rest = path[len("/api/tools/"):]
+                tid, sep, action = rest.rpartition("/")
+                if sep and tid:
+                    tid = urllib.parse.unquote(tid)
+                    if action == "install":
+                        return self._json(
+                            202, host.start_install_op(tid, "install"))
+                    if action == "update":
+                        return self._json(
+                            202, host.start_install_op(tid, "update"))
+                    if action == "rollback":
+                        return self._json(200, host.rollback_tool(tid))
+                    if action == "remove":
+                        return self._json(200, host.remove_tool(tid))
             return self._json(404, {"error": "未知接口"})
 
         # ------------------------------------------------- api GET
@@ -355,6 +570,13 @@ def make_handler(host: Host):
             try:
                 if path == "/api/state":
                     return self._json(200, host.state())
+                if path == "/api/apps":
+                    return self._json(200, {
+                        "apps": [a.to_dict() for a in host.jobs.apps()]})
+                if path == "/api/ops":
+                    return self._json(200, host.ops())
+                if path == "/api/config":
+                    return self._json(200, host.get_config())
                 if path == "/api/jobs":
                     return self._json(200, {
                         "jobs": [j.to_dict() for j in host.jobs.history()]})

@@ -336,7 +336,7 @@ perfbox manifest check <file>   校验一份清单
 ### M3 应用型命令与工具管理界面 → v0.3.0
 
 - [x] 1. `jobs`：应用部分——端口分配、就绪检测、单实例、宿主退出时清理。
-- [ ] 2. 接口：`/api/apps`、`/api/tools/<id>/install|update|rollback|remove`、`/api/config`。
+- [x] 2. 接口：`/api/apps`、`/api/tools/<id>/install|update|rollback|remove`、`/api/config`。
 - [ ] 3. 前端：
    - 应用型命令显示「打开」按钮，在新标签页进入工具自带界面。
    - 工具管理：安装进度、一键全部更新、回退到上一版、卸载。
