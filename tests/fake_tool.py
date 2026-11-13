@@ -15,6 +15,13 @@ spec 键：
   nofiles=1         不写结果文件
   big=M             结果文件 content.bin 写 M 字节
 -o 以 .txt/.html 等扩展名结尾时按“输出到文件”处理：创建父目录并只写该文件。
+
+应用模式：python fake_tool.py app --port <n> --mode <m>
+  gbk       打印一行 ANSI 编码的就绪行后每 50ms 一行 tick，常驻
+  flood     就绪行后每 10ms 一行 1KiB，验证宿主持续排空管道
+  silent    永不打印就绪行（测试超时）
+  die       打印一行错误后以 7 退出
+  shortlive 就绪行后打印一行即退出（测试退出检测）
 """
 
 import locale
@@ -24,8 +31,50 @@ import sys
 import time
 
 
+def app_mode(args):
+    port = 0
+    mode = "gbk"
+    i = 0
+    while i < len(args):
+        if args[i] == "--port" and i + 1 < len(args):
+            port = int(args[i + 1])
+            i += 2
+        elif args[i] == "--mode" and i + 1 < len(args):
+            mode = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    def emit(b):
+        os.write(1, b)
+
+    if mode == "die":
+        emit("启动失败：端口被占用".encode(locale.getencoding()) + b"\n")
+        return 7
+    if mode != "silent":
+        line = f"Fake 1.0 已启动：http://127.0.0.1:{port}/#t=abc"
+        enc = locale.getencoding() if mode == "gbk" else "utf-8"
+        emit(line.encode(enc) + b"\n")
+    if mode == "shortlive":
+        emit(b"bye\n")
+        return 0
+    if mode == "flood":
+        n = 0
+        while True:
+            emit(f"{n} ".encode() + b"x" * 1015 + b"\n")
+            n += 1
+            time.sleep(0.01)
+    n = 0
+    while True:                       # 常驻，等待宿主结束进程树
+        emit(f"app tick {n}\n".encode())
+        n += 1
+        time.sleep(0.05)
+
+
 def main():
     args = sys.argv[1:]
+    if args and args[0] == "app":
+        return app_mode(args[1:])
     out = None
     if "-o" in args:
         i = args.index("-o")

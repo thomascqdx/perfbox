@@ -3,6 +3,7 @@
 import ctypes
 import json
 import os
+from ctypes import wintypes
 import re
 import shutil
 import subprocess
@@ -65,11 +66,17 @@ def env(tmp_path, monkeypatch):
 def _pid_alive(pid):
     if not hasattr(ctypes, "windll"):
         return False
-    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+    k = ctypes.windll.kernel32
+    h = k.OpenProcess(0x1000, False, pid)
     if not h:
         return False
-    ctypes.windll.kernel32.CloseHandle(h)
-    return True
+    try:
+        code = wintypes.DWORD()
+        if not k.GetExitCodeProcess(h, ctypes.byref(code)):
+            return False
+        return code.value == 259        # STILL_ACTIVE
+    finally:
+        k.CloseHandle(h)
 
 
 # ------------------------------------------------------------ 结果目录
@@ -456,3 +463,103 @@ def test_cancel_foreign_job_rejected(env):
         assert jA.wait(job.id, 30).state == "cancelled"
     finally:
         jA.shutdown()
+
+
+# ------------------------------------------------------------ 应用
+
+def make_app_tool(mode="gbk"):
+    cmd = Command(
+        id="ui", title="界面", summary=None, kind="app",
+        args=("app", "--port", "{port}", "--mode", mode),
+        params=(), output=None, outputs=(),
+        ready_url_regex=r"http://127\.0\.0\.1:\d+/#t=\S+")
+    man = Manifest(
+        schema=1, id="memscope", title="t", summary="s", domain="memory",
+        version="1.0.0", tag="v1.0.0", min_perfbox=None,
+        artifact=Artifact(name="fake", kind="exe", size=1,
+                          sha256="0" * 64, entry=(sys.executable, FAKE)),
+        commands=(cmd,), raw={})
+    return InstalledTool(id="memscope", version="1.0.0",
+                         root=Path("no-real-root"), manifest=man)
+
+
+def test_app_start_ready_and_url(env):
+    home, workdir, j = env
+    app = j.start_app(make_app_tool(), "ui")
+    assert app.state == "ready"
+    assert re.fullmatch(r"http://127\.0\.0\.1:\d+/#t=abc", app.url)
+    assert app.port > 0 and app.pid and app.started
+    assert app.command_title == "界面"
+    assert "已启动" in "".join(app._lines)      # GBK 行解码成功
+    assert "已启动" in app.to_dict()["log"]
+    assert j.apps() == [app]
+    j.stop_app("memscope")
+    deadline = time.time() + 10
+    while j.apps() and time.time() < deadline:
+        time.sleep(0.05)
+    assert j.apps() == []
+    assert app.state == "exited"
+    assert not _pid_alive(app.pid)
+
+
+def test_app_second_start_returns_same(env):
+    home, workdir, j = env
+    a1 = j.start_app(make_app_tool(), "ui")
+    a2 = j.start_app(make_app_tool(), "ui")
+    assert a1 is a2 and a2.pid == a1.pid
+
+
+def test_app_pipe_is_drained(env):
+    home, workdir, j = env
+    app = j.start_app(make_app_tool("flood"), "ui")
+    assert app.state == "ready"
+    last = app._lines[-1] if app._lines else ""
+    time.sleep(1.5)          # ~150 KiB 产出，远超 64 KiB 管道缓冲
+    rt = j._app_rt.get("memscope")
+    assert rt is not None and rt.proc.poll() is None
+    assert app._lines and app._lines[-1] != last   # 仍在产出
+
+
+def test_app_timeout(env):
+    home, workdir, j = env
+    with pytest.raises(JobError) as ei:
+        j.start_app(make_app_tool("silent"), "ui", timeout=1)
+    assert "超时" in str(ei.value)
+    assert j.apps() == []
+
+
+def test_app_exits_before_ready(env):
+    home, workdir, j = env
+    with pytest.raises(JobError) as ei:
+        j.start_app(make_app_tool("die"), "ui", timeout=10)
+    assert "端口被占用" in str(ei.value)      # 最近日志包含在错误里
+    assert j.apps() == []
+
+
+def test_app_exit_detected(env):
+    home, workdir, j = env
+    app = j.start_app(make_app_tool("shortlive"), "ui")
+    assert app.state == "ready"
+    deadline = time.time() + 10
+    while j.apps() and time.time() < deadline:
+        time.sleep(0.05)
+    assert j.apps() == []
+    assert app.state == "exited"
+
+
+def test_app_stop_noop_and_kind_guard(env):
+    home, workdir, j = env
+    j.stop_app("nonexistent")                 # 不存在的工具，无操作
+    with pytest.raises(JobError):
+        j.start_app(make_tool(), "run")       # job 型命令不能 start_app
+
+
+def test_shutdown_kills_apps(env):
+    home, workdir, j = env
+    app = j.start_app(make_app_tool(), "ui")
+    pid = app.pid
+    j.shutdown()
+    deadline = time.time() + 10
+    while _pid_alive(pid) and time.time() < deadline:
+        time.sleep(0.05)
+    assert not _pid_alive(pid)

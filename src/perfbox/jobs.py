@@ -13,11 +13,12 @@ import os
 import queue
 import re
 import secrets
+import socket
 import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from perfbox import store
@@ -65,6 +66,46 @@ class Job:
 _FIELDS = ("id", "tool", "version", "command", "values", "argv",
            "out_dir", "state", "exit_code", "created", "started",
            "finished", "outputs", "error", "host_pid", "command_title")
+
+
+@dataclass
+class App:
+    """应用型命令的一个运行实例（只存在于内存，不落盘）。"""
+
+    tool: str
+    version: str
+    command: str
+    command_title: str | None
+    state: str              # starting | ready | failed | exited
+    url: str | None
+    pid: int | None
+    port: int
+    started: float
+    error: str | None
+    _lines: list = field(default_factory=list, repr=False)
+
+    def to_dict(self) -> dict:
+        d = {k: getattr(self, k) for k in _APP_FIELDS}
+        d["log"] = "".join(list(self._lines))
+        return d
+
+
+_APP_FIELDS = ("tool", "version", "command", "command_title", "state",
+               "url", "pid", "port", "started", "error")
+
+
+class _AppRt:
+    """应用的运行时状态（进程、Job Object、就绪事件、版本占用）。"""
+
+    __slots__ = ("proc", "winjob", "command", "use_exit", "evt", "regex")
+
+    def __init__(self, proc, winjob, command, use_exit, regex):
+        self.proc = proc
+        self.winjob = winjob
+        self.command = command
+        self.use_exit = use_exit
+        self.evt = threading.Event()
+        self.regex = regex
 
 
 class _Rt:
@@ -148,6 +189,26 @@ if os.name == "nt":
                 self.handle = None
 
 
+def _free_port() -> int:
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _decode_line(raw: bytes, loc: str) -> str:
+    """UTF-8 → 本机 ANSI 代码页 → UTF-8 replace。"""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return raw.decode(loc)
+        except UnicodeDecodeError:
+            return raw.decode("utf-8", errors="replace")
+
+
 def _pid_alive(pid) -> bool:
     """进程是否还活着；None/非整数一律视为不存在。"""
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
@@ -195,6 +256,9 @@ class Jobs:
         self._workdir = Path(workdir)
         self._jobs: dict[str, Job] = {}
         self._rt: dict[str, _Rt] = {}
+        self._apps: dict[str, App] = {}
+        self._app_rt: dict[str, _AppRt] = {}
+        self._app_locks: dict[str, threading.Lock] = {}
         self._cond = threading.Condition()
         self._queue: queue.Queue = queue.Queue()
         self._dead = False
@@ -426,10 +490,150 @@ class Jobs:
         for job, _ in live:
             if job.state == "running":
                 self.wait(job.id, 60)
+        for tid, rt in list(self._app_rt.items()):
+            app = self._apps.get(tid)
+            with self._cond:
+                if app is not None and app.state in ("starting", "ready"):
+                    app.state = "exited"
+                rt.evt.set()
+            _kill_tree(rt.proc, rt.winjob)
         for _ in self._workers:
             self._queue.put(None)
         for t in self._workers:
             t.join(10)
+
+    # ------------------------------------------------------- 应用
+    def start_app(self, tool: InstalledTool, command_id: str,
+                  timeout: float = 30.0) -> App:
+        """启动应用型命令；同一工具同一时刻只保留一个实例。"""
+        if self._dead:
+            raise JobError("任务系统已关闭")
+        try:
+            cmd = tool.manifest.command(command_id)
+        except KeyError:
+            raise JobError(f"未知命令：{command_id}") from None
+        if cmd.kind != "app":
+            raise JobError(f"{command_id} 不是应用型命令")
+        if not cmd.ready_url_regex:
+            raise JobError(f"{command_id} 缺少 ready.url_regex")
+        with self._cond:
+            lock = self._app_locks.setdefault(tool.id, threading.Lock())
+        with lock:
+            cur = self._apps.get(tool.id)
+            rt0 = self._app_rt.get(tool.id)
+            if cur is not None and rt0 is not None and \
+                    cur.state in ("starting", "ready") and \
+                    rt0.proc.poll() is None:
+                return cur                      # 已在跑，直接复用
+            port = _free_port()
+            try:
+                argv = tool.argv(command_id, {}, None, port)
+            except ParamError as e:
+                raise JobError(str(e)) from e
+            app = App(tool=tool.id, version=tool.version,
+                      command=command_id, command_title=cmd.title,
+                      state="starting", url=None, pid=None, port=port,
+                      started=time.time(), error=None)
+            env = dict(os.environ)
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUNBUFFERED"] = "1"
+            try:
+                proc = subprocess.Popen(
+                    argv, cwd=str(self._workdir),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, env=env,
+                    creationflags=getattr(subprocess,
+                                          "CREATE_NO_WINDOW", 0))
+            except OSError as e:
+                app.state = "failed"
+                app.error = f"启动失败：{e}"
+                raise JobError(app.error) from e
+            app.pid = proc.pid
+            winjob = None
+            if os.name == "nt":
+                try:
+                    winjob = _WinJob()
+                    winjob.assign(proc)
+                except OSError:
+                    winjob = None
+            ctx = store.use(tool)               # 占用版本直到应用退出
+            ctx.__enter__()
+            rt = _AppRt(proc, winjob, cmd,
+                        lambda: ctx.__exit__(None, None, None),
+                        re.compile(cmd.ready_url_regex))
+            with self._cond:
+                self._apps[tool.id] = app
+                self._app_rt[tool.id] = rt
+            threading.Thread(target=self._app_monitor, args=(app, rt),
+                             daemon=True,
+                             name=f"perfbox-app-{tool.id}").start()
+            if not rt.evt.wait(timeout):
+                self._fail_app(app, rt, f"等待就绪超时（{timeout:.0f} 秒）")
+            if app.state != "ready":
+                self._fail_app(app, rt, "进程提前退出")
+            return app
+
+    def _fail_app(self, app: App, rt: _AppRt, reason: str):
+        tail = "".join(list(app._lines)[-20:])
+        with self._cond:
+            app.state = "failed"
+            app.error = reason
+        rt.evt.set()
+        _kill_tree(rt.proc, rt.winjob)
+        msg = f"{app.command_title or app.command}：{reason}"
+        raise JobError(msg + (f"，最近日志：\n{tail}".rstrip()
+                              if tail else ""))
+
+    def apps(self) -> list[App]:
+        """存活中的应用实例（starting/ready）。"""
+        return [a for a in self._apps.values()
+                if a.state in ("starting", "ready")]
+
+    def stop_app(self, tool_id: str) -> None:
+        """结束一个工具的应用进程树；没有实例时无操作。"""
+        rt = self._app_rt.get(tool_id)
+        if rt is None:
+            return
+        app = self._apps.get(tool_id)
+        with self._cond:
+            if app is not None and app.state in ("starting", "ready"):
+                app.state = "exited"
+            rt.evt.set()
+        _kill_tree(rt.proc, rt.winjob)
+
+    def _app_monitor(self, app: App, rt: _AppRt) -> None:
+        """读应用 stdout：就绪匹配 + 持续排空 + 退出检测。"""
+        loc = locale.getencoding()
+        try:
+            for raw in rt.proc.stdout:
+                line = _decode_line(raw, loc).replace("\r\n", "\n")
+                with self._cond:
+                    app._lines.append(line)
+                    if len(app._lines) > 200:
+                        del app._lines[:-200]
+                if app.state == "starting" and rt.regex is not None:
+                    m = rt.regex.search(line)
+                    if m:
+                        with self._cond:
+                            if app.state == "starting":
+                                app.url = m.group(0)
+                                app.state = "ready"
+                        rt.evt.set()
+        except OSError:
+            pass
+        rt.proc.wait()
+        with self._cond:
+            if app.state in ("starting", "ready"):
+                app.state = "exited"
+            if self._app_rt.get(app.tool) is rt:
+                self._apps.pop(app.tool, None)
+                self._app_rt.pop(app.tool, None)
+            if rt.use_exit is not None:
+                rt.use_exit()
+                rt.use_exit = None
+            rt.evt.set()
+        if rt.winjob is not None:
+            rt.winjob.close()
 
     # ------------------------------------------------------- 内部
     def _worker(self) -> None:
@@ -510,21 +714,14 @@ class Jobs:
                      exit_code=rc)
 
     def _read_log(self, job: Job, proc) -> None:
-        """逐行读子进程输出：UTF-8 → 系统 ANSI 代码页 → UTF-8 replace。"""
+        """逐行读子进程输出，UTF-8 → ANSI → replace 解码后落盘。"""
         loc = locale.getencoding()
         try:
             with open(self._home / "jobs" / job.id / "log.txt",
                       "ab") as f:
                 ended = True
                 for raw in proc.stdout:
-                    try:
-                        s = raw.decode("utf-8")
-                    except UnicodeDecodeError:
-                        try:
-                            s = raw.decode(loc)
-                        except UnicodeDecodeError:
-                            s = raw.decode("utf-8", errors="replace")
-                    s = s.replace("\r\n", "\n")
+                    s = _decode_line(raw, loc).replace("\r\n", "\n")
                     f.write(s.encode("utf-8"))
                     f.flush()
                     ended = s.endswith("\n")
