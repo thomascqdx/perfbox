@@ -100,6 +100,11 @@ def _cmd_manifest_check(file: str, template: bool) -> int:
     return 0
 
 
+def _cmd_ui(port: int, open_browser: bool) -> int:
+    from perfbox import server
+    return server.serve(port=port, open_browser=open_browser)
+
+
 def _run(args: list[str]) -> int:
     if not args:
         print("用法：perfbox run <tool> [--] <传给工具的参数>",
@@ -120,6 +125,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="perfbox", description="性能分析工具箱：获取、运行、管理各分析工具")
     sub = p.add_subparsers(dest="cmd")
+    pu2 = sub.add_parser("ui", help="启动本机界面")
+    pu2.add_argument("--port", type=int, default=0,
+                     help="监听端口（默认随机，仅 127.0.0.1）")
+    pu2.add_argument("--no-browser", action="store_true",
+                     help="不自动打开浏览器")
     sub.add_parser("list", help="列出名录中的工具、已装版本、可用新版")
     pi = sub.add_parser("install", help="安装工具")
     pi.add_argument("tool")
@@ -146,14 +156,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     try:
         if not args:
-            parser.print_help()
-            return 0
+            return _cmd_ui(0, True)
         if args[0] in ("-V", "--version"):
             print(f"perfbox {perfbox.__version__}")
             return 0
         if args[0] == "run":
             return _run(args[1:])
         ns = parser.parse_args(args)
+        if ns.cmd == "ui":
+            return _cmd_ui(ns.port, not ns.no_browser)
         if ns.cmd == "list":
             return _cmd_list()
         if ns.cmd == "install":

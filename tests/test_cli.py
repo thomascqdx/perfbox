@@ -24,10 +24,23 @@ def test_version(capsys):
     assert capsys.readouterr().out.strip() == f"perfbox {perfbox.__version__}"
 
 
-def test_no_args_prints_help(capsys):
+def test_no_args_runs_ui(monkeypatch):
+    calls = []
+    monkeypatch.setattr("perfbox.server.serve",
+                        lambda **kw: calls.append(kw) or 0)
     assert cli.main([]) == 0
-    out = capsys.readouterr().out
-    assert "list" in out and "install" in out and "run" in out
+    assert calls == [{"port": 0, "open_browser": True}]
+
+
+def test_ui_subcommand(monkeypatch):
+    calls = []
+    monkeypatch.setattr("perfbox.server.serve",
+                        lambda **kw: calls.append(kw) or 0)
+    assert cli.main(["ui"]) == 0
+    assert calls == [{"port": 0, "open_browser": True}]
+    calls.clear()
+    assert cli.main(["ui", "--port", "8899", "--no-browser"]) == 0
+    assert calls == [{"port": 8899, "open_browser": False}]
 
 
 def test_list_uninstalled(env, capsys):
