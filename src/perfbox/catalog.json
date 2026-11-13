@@ -1,0 +1,18 @@
+{
+  "tools": [
+    {
+      "id": "memscope",
+      "title": "内存测试包 A/B 对比",
+      "summary": "对比两个内存测试包，输出 HTML、Markdown 和 Excel 报告",
+      "domain": "memory",
+      "github": "thomascqdx/memscope"
+    },
+    {
+      "id": "perfetto-trim",
+      "title": "Trace 裁剪与切分",
+      "summary": "按时间裁剪、切分 perfetto trace，或按关键字查找",
+      "domain": "trace",
+      "github": "thomascqdx/perfetto-trim"
+    }
+  ]
+}
