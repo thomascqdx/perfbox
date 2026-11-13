@@ -289,7 +289,7 @@ perfbox manifest check <file>   校验一份清单
 - [x] 4. `store`：安装、回退、删除、兼容闸门。
 - [x] 5. `catalog.json`：先收 memscope、perfetto-trim 两条。
 - [x] 6. `cli`：`list`、`install`、`update`、`rollback`、`run`、`manifest check`。
-- [ ] 7. `tools/stamp_manifest.py`：供工具仓库拷贝。
+- [x] 7. `tools/stamp_manifest.py`：供工具仓库拷贝。
 
 工具侧：
 
