@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>perfbox</title>
+</head>
+<body>
+<h1>perfbox</h1>
+<p>工作台界面将在 M2 里程碑提供。</p>
+<script>
+// token 在 URL fragment #t= 里，API 请求要带 X-Perfbox-Token 头。
+window.PERFBOX_TOKEN = location.hash.startsWith("#t=")
+    ? location.hash.slice(3) : "";
+</script>
+</body>
+</html>
