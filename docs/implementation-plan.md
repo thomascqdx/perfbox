@@ -304,11 +304,11 @@ perfbox manifest check <file>   校验一份清单
 
 验收：
 
-- [ ] 在全新的 `PERFBOX_HOME` 下，`perfbox run memscope -- -V` 自动下载、校验并打印版本号。
-- [ ] `perfbox run perfetto-trim -- --version` 同上。
-- [ ] 断网时再次运行，直接使用已装版本，没有报错和明显等待。
-- [ ] 把 `PERFBOX_SOURCE` 指向一个本地目录源，行为一致。
-- [ ] 篡改目录源中的产物后，安装失败并指出校验不符，已装版本不受影响。
+- [x] 在全新的 `PERFBOX_HOME` 下，`perfbox run memscope -- -V` 自动下载、校验并打印版本号。
+- [x] `perfbox run perfetto-trim -- --version` 同上。
+- [x] 断网时再次运行，直接使用已装版本，没有报错和明显等待。
+- [x] 把 `PERFBOX_SOURCE` 指向一个本地目录源，行为一致。
+- [x] 篡改目录源中的产物后，安装失败并指出校验不符，已装版本不受影响。
 
 ### M2 宿主服务与工作台 → v0.2.0
 
