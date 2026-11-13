@@ -142,9 +142,11 @@ code, .mono {
   border-top: 1px solid var(--rule);
   padding: 10px 20px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
+.rail-hist { display: flex; align-items: center; justify-content: space-between; }
 .rail-foot a { color: var(--ink); }
 .rail-foot a.active { font-weight: 600; }
 .rail-select { display: none; }
@@ -420,6 +422,40 @@ table.hist .ops button { font-size: 12px; padding: 2px 10px;
   .tablewrap { overflow-x: auto; }
 }
 
+/* ---------------- 工具管理 ---------------- */
+.toolshead {
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 14px;
+}
+.toolshead .muted { font-size: 13px; }
+table.tools tbody tr { cursor: default; }
+table.tools td .dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 8px; vertical-align: baseline;
+}
+.opline { display: inline-flex; align-items: center; gap: 8px; }
+.prog {
+  display: inline-block; width: 110px; height: 4px;
+  background: #E2E7EB; border-radius: 2px; overflow: hidden;
+}
+.progbar { display: block; height: 100%; background: var(--primary); }
+.pct { font-family: var(--f-head); font-variant-numeric: tabular-nums;
+  font-size: 12px; color: var(--sub); }
+.operr { color: var(--st-failed); font-size: 12px; margin-right: 8px; }
+
+/* ---------------- 设置 ---------------- */
+.srclist .srcrow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; border-bottom: 1px solid #E2E7EB;
+}
+.srclist .srcrow:last-child { border-bottom: 0; }
+.srclist .kind {
+  flex: 0 0 52px; font-size: 12px; color: var(--sub);
+}
+.srclist input { flex: 1; min-width: 0; }
+.srclist .iconbtn { padding: 2px 9px; font-size: 13px; }
+.srcbtns { display: flex; gap: 10px; margin-top: 8px; }
+
 .empty { color: var(--sub); padding: 40px 20px; text-align: center; }
 
 .gate {
@@ -445,7 +481,8 @@ table.hist .ops button { font-size: 12px; padding: 2px 10px;
   .rail-brand .ver { display: none; }
   .rail-nav { display: none; }
   .rail-select { display: block; flex: 1; min-width: 0; }
-  .rail-foot { border-top: 0; padding: 0; flex: 0 0 auto; }
+  .rail-foot { border-top: 0; padding: 0; flex: 0 0 auto;
+    flex-direction: row; align-items: center; gap: 14px; }
   .formrow { flex-direction: column; gap: 2px; }
   .formrow > label, .formrow > .flabel { flex: none; text-align: left; padding-top: 0; }
   .ticket .jid { font-size: 28px; }

@@ -125,6 +125,16 @@ function fmtDur(a, b) {
   if (s < 3600) return `${Math.floor(s / 60)} 分 ${Math.floor(s % 60)} 秒`;
   return `${Math.floor(s / 3600)} 时 ${Math.floor((s % 3600) / 60)} 分`;
 }
+function railToolState(t) {
+  if (t.op && !t.op.finished) {
+    const p = t.op.total ? Math.round(100 * t.op.done / t.op.total) : null;
+    return p == null ? "安装中…" : `安装中 ${p}%`;
+  }
+  if (t.incompatible) return "需要升级 perfbox";
+  if (t.update) return `可更新 ${t.update}`;
+  return t.installed || "未安装";
+}
+
 function toolTitle(id) {
   const t = (S.state?.tools || []).find(t => t.id === id);
   return t ? t.title : id;
@@ -176,10 +186,8 @@ function renderRail() {
         el("span", {class: "dot",
                     style: `background:${DOMAIN_COLORS[t.domain] || "#999"}`}),
         el("span", {class: "t", text: t.title}),
-        el("span", {
-          class: "st" + (t.update ? " update" : ""),
-          text: t.update ? `可更新 ${t.update}`
-                         : (t.installed || "未安装")}),
+        el("span", {class: "st" + (t.update ? " update" : ""),
+                    text: railToolState(t)}),
       ]);
       nav.append(row);
       grp.append(el("option", {value: t.id, text:
@@ -191,10 +199,16 @@ function renderRail() {
   kids.push(nav, sel);
   const running = S.jobs.filter(j => !isTerminal(j)).length;
   kids.push(el("div", {class: "rail-foot"}, [
-    el("a", {href: "#/history",
-             class: cur === "#/history" ? "active" : "", text: "历史任务"}),
-    el("span", {class: "badge" + (running ? "" : " zero"),
-                text: String(running)}),
+    el("a", {href: "#/tools",
+             class: cur === "#/tools" ? "active" : "", text: "工具管理"}),
+    el("a", {href: "#/settings",
+             class: cur === "#/settings" ? "active" : "", text: "设置"}),
+    el("div", {class: "rail-hist"}, [
+      el("a", {href: "#/history",
+               class: cur === "#/history" ? "active" : "", text: "历史任务"}),
+      el("span", {class: "badge" + (running ? "" : " zero"),
+                  text: String(running)}),
+    ]),
   ]));
   railEl.replaceChildren(...kids);
 }
@@ -240,6 +254,8 @@ function currentRoute() {
   if ((m = h.match(/^#\/job\/([A-Za-z0-9-]+)/)))
     return {name: "job", id: m[1]};
   if (h === "#/history") return {name: "history"};
+  if (h === "#/tools") return {name: "tools"};
+  if (h === "#/settings") return {name: "settings"};
   return {name: "home"};
 }
 
@@ -251,6 +267,8 @@ async function render() {
     if (r.name === "tool") return await renderTool(r.id, r.cmd);
     if (r.name === "job") return await renderJob(r.id);
     if (r.name === "history") return await renderHistory();
+    if (r.name === "tools") return await renderTools();
+    if (r.name === "settings") return await renderSettings();
     return await renderHome();
   } catch (e) {
     if (e instanceof GateError) return;
@@ -373,14 +391,57 @@ async function renderTool(id, cmdId) {
   }
 
   if (cmd.kind === "app") {
-    kids.push(el("div", {class: "sheet sheet-pad"}, [
+    const toolState = (S.state ? S.state.tools : [])
+      .find(t => t.id === id);
+    const running = toolState && toolState.app;
+    const errEl = el("div", {class: "err", hidden: true});
+    const body = [
       el("h2", {text: cmd.title, style: "font-size:16px"}),
       cmd.summary ? el("p", {class: "muted", text: cmd.summary}) : null,
-      el("p", {}, [el("button", {type: "button", disabled: true,
-                                 text: "打开"})]),
-      el("p", {class: "muted small",
-               text: "这个命令会打开工具自带的界面，下一版 perfbox 支持。"}),
-    ]));
+    ];
+    if (running && running.url) {
+      body.push(el("p", {class: "muted"}, [
+        "已在运行：", el("code", {class: "mono", text: running.url})]));
+      body.push(el("div", {class: "actions"}, [
+        el("button", {type: "button", class: "primary", text: "打开",
+          onclick: () => window.open(running.url, "_blank", "noopener")}),
+        el("button", {type: "button", text: "停止", onclick: async (ev) => {
+          ev.currentTarget.disabled = true;
+          try { await api(`/api/apps/${id}/stop`, {method: "POST"}); }
+          catch { /* 状态轮询会刷新 */ }
+          await refreshAll();
+          render();
+        }}),
+      ]));
+    } else {
+      const open = el("button", {type: "button", class: "primary",
+                                 text: "打开"});
+      open.addEventListener("click", async () => {
+        // 同步开窗口，避开弹窗拦截
+        const w = window.open("", "_blank");
+        errEl.hidden = true;
+        open.disabled = true;
+        open.textContent = "正在启动…";
+        try {
+          const app = await api("/api/apps", {
+            method: "POST", body: {tool: id, command: cmd.id}});
+          if (w && app.url) w.location.href = app.url;
+          else if (w) w.close();
+          await refreshAll();
+          render();
+        } catch (e) {
+          if (w) w.close();
+          if (!(e instanceof GateError)) {
+            errEl.textContent = e.message;
+            errEl.hidden = false;
+          }
+          open.disabled = false;
+          open.textContent = "打开";
+        }
+      });
+      body.push(errEl, el("div", {class: "actions"}, [open]));
+    }
+    kids.push(el("div", {class: "sheet sheet-pad"}, body));
     main.replaceChildren(...kids);
     return;
   }
@@ -705,17 +766,296 @@ async function renderHistory() {
   main.replaceChildren(...kids);
 }
 
+// ------------------------------------------------------------- 工具管理页
+function toolRow(t) {
+  const acts = [];
+  const op = t.op;
+  const busy = op && !op.finished;
+  if (busy) {
+    const pct = op.total ? Math.round(100 * op.done / op.total) : null;
+    acts.push(el("span", {class: "opline"}, [
+      el("span", {class: "prog"}, [
+        el("span", {class: "progbar",
+                    style: `width:${pct == null ? 15 : Math.max(pct, 4)}%`}),
+      ]),
+      el("span", {class: "pct",
+                  text: pct == null ? "…" : `${pct}%`}),
+    ]));
+  } else {
+    if (op && op.error)
+      acts.push(el("span", {class: "operr", text: op.error}));
+    if (!t.installed)
+      acts.push(el("button", {type: "button", text: "安装",
+        onclick: (ev) => toolOp(ev, t, "install")}));
+    if (t.update)
+      acts.push(el("button", {type: "button", class: "primary",
+        text: `更新到 ${t.update}`,
+        onclick: (ev) => toolOp(ev, t, "update")}));
+    if (t.previous)
+      acts.push(el("button", {type: "button", text: `回退到 ${t.previous}`,
+        onclick: (ev) => {
+          if (!window.confirm(`回退 ${t.title} 到 ${t.previous}？`)) return;
+          toolOp(ev, t, "rollback");
+        }}));
+    if (t.installed)
+      acts.push(el("button", {type: "button", text: "卸载",
+        onclick: (ev) => {
+          if (!window.confirm(`卸载 ${t.title}？`)) return;
+          toolOp(ev, t, "remove");
+        }}));
+  }
+  return el("tr", {}, [
+    el("td", {}, [
+      el("span", {class: "dot",
+                  style: `background:${DOMAIN_COLORS[t.domain] || "#999"}`}),
+      t.title,
+    ]),
+    el("td", {class: "tnum", text: t.installed || "未安装"}),
+    el("td", {class: "tnum", text: t.previous || "—"}),
+    el("td", {class: "tnum"}, [
+      t.incompatible
+        ? el("span", {class: "error-text", text: "需要升级 perfbox"})
+        : (t.latest || "—"),
+    ]),
+    el("td", {class: "ops"}, acts),
+  ]);
+}
+
+async function toolOp(ev, t, action) {
+  const b = ev.currentTarget;
+  b.disabled = true;
+  try {
+    await api(`/api/tools/${t.id}/${action}`, {method: "POST"});
+  } catch (e) {
+    if (!(e instanceof GateError)) window.alert(e.message);
+  }
+  await refreshAll();
+  if (currentRoute().name === "tools") renderTools();
+}
+
+async function renderTools() {
+  await refreshAll();
+  const st = S.state;
+  const tools = (st && st.tools) || [];
+  const updatable = tools.filter(t => t.update && !(t.op && !t.op.finished));
+
+  const checkBtn = el("button", {type: "button", text: "检查更新",
+    onclick: async (ev) => {
+      ev.currentTarget.disabled = true;
+      try { await api("/api/updates/check", {method: "POST"}); }
+      catch { /* 下次轮询 */ }
+      renderTools();
+    }});
+  const allBtn = el("button", {type: "button", class: "primary",
+    text: `全部更新（${updatable.length}）`,
+    disabled: !updatable.length,
+    onclick: async (ev) => {
+      ev.currentTarget.disabled = true;
+      for (const t of updatable) {
+        try { await api(`/api/tools/${t.id}/update`, {method: "POST"}); }
+        catch { continue; }
+        // 等这个操作跑完再发下一个
+        for (;;) {
+          await new Promise(r => setTimeout(r, 1000));
+          await refreshAll();
+          if (currentRoute().name !== "tools") return;
+          renderTools();
+          const cur = (S.state.tools || []).find(x => x.id === t.id);
+          if (!cur || !cur.op || cur.op.finished) break;
+        }
+      }
+    }});
+
+  const head = el("div", {class: "toolshead"}, [
+    el("span", {class: "muted",
+                text: `上次检查：${st && st.checked ? fmtTime(st.checked) : "—"}`}),
+    checkBtn, allBtn,
+  ]);
+
+  const table = el("div", {class: "tablewrap"}, [
+    el("table", {class: "hist tools"}, [
+      el("thead", {}, [el("tr", {},
+        ["工具", "已装版本", "上一版", "最新版本", "操作"]
+          .map(c => el("th", {text: c})))]),
+      el("tbody", {}, tools.map(toolRow)),
+    ]),
+  ]);
+  main.replaceChildren(
+    el("div", {class: "page-head"}, [el("h1", {text: "工具管理"})]),
+    head,
+    el("div", {class: "sheet"}, [table]));
+
+  const busy = (st && st.checking) ||
+    tools.some(t => t.op && !t.op.finished);
+  if (busy) viewAfter(1000, () => {
+    if (currentRoute().name === "tools") renderTools();
+  });
+}
+
+// ------------------------------------------------------------- 设置页
+async function renderSettings() {
+  let cfg;
+  try {
+    cfg = await api("/api/config");
+  } catch (e) {
+    if (e instanceof GateError) return;
+    main.replaceChildren(el("div", {class: "sheet sheet-pad"}, [
+      el("p", {class: "error-text", text: e.message})]));
+    return;
+  }
+  const srcs = (cfg.sources || []).map(s => ({...s}));
+  const errEl = el("div", {class: "err", hidden: true});
+  const noteEl = el("div", {class: "muted", hidden: true});
+  const listEl = el("div", {class: "srclist"});
+
+  function redraw() {
+    const rows = [];
+    srcs.forEach((s, i) => {
+      const kids = [
+        el("span", {class: "kind",
+                    text: s.type === "dir" ? "目录" : "GitHub"}),
+      ];
+      if (s.type === "dir") {
+        const inp = el("input", {type: "text", value: s.path || "",
+          "aria-label": "目录路径",
+          oninput: (ev) => { s.path = ev.target.value; }});
+        kids.push(inp,
+          el("button", {type: "button", text: "浏览目录",
+            onclick: async (ev) => {
+              const b = ev.currentTarget; b.disabled = true;
+              try {
+                const paths = await pick("dir", false, null);
+                if (paths.length) { s.path = paths[0]; inp.value = paths[0]; }
+              } catch { /* 取消 */ } finally { b.disabled = false; }
+            }}));
+      } else {
+        kids.push(el("span", {class: "muted", text: "github.com 发布页"}));
+      }
+      kids.push(
+        el("button", {type: "button", class: "iconbtn", text: "↑",
+          "aria-label": "上移", disabled: i === 0,
+          onclick: () => { [srcs[i - 1], srcs[i]] = [srcs[i], srcs[i - 1]];
+                           redraw(); }}),
+        el("button", {type: "button", class: "iconbtn", text: "↓",
+          "aria-label": "下移", disabled: i === srcs.length - 1,
+          onclick: () => { [srcs[i], srcs[i + 1]] = [srcs[i + 1], srcs[i]];
+                           redraw(); }}),
+        el("button", {type: "button", class: "iconbtn", text: "×",
+          "aria-label": "移除",
+          onclick: () => { srcs.splice(i, 1); redraw(); }}));
+      rows.push(el("div", {class: "srcrow"}, kids));
+    });
+    if (!srcs.length)
+      rows.push(el("div", {class: "muted",
+                           text: "没有配置源，将使用 GitHub。"}));
+    listEl.replaceChildren(...rows);
+  }
+  redraw();
+
+  const proxyInput = el("input", {type: "text", value: cfg.proxy || "",
+    placeholder: "如 http://127.0.0.1:7890，留空则用环境变量 HTTPS_PROXY"});
+  const mpInput = el("input", {type: "text", inputmode: "numeric",
+    value: String(cfg.max_parallel_jobs), style: "width:80px"});
+
+  const saveBtn = el("button", {type: "button", class: "primary",
+    text: "保存"});
+  saveBtn.addEventListener("click", async () => {
+    errEl.hidden = true; noteEl.hidden = true;
+    const mp = parseInt(mpInput.value, 10);
+    if (!Number.isInteger(mp) || mp < 1 || String(mp) !== mpInput.value.trim()) {
+      errEl.textContent = "并发任务数必须是 ≥1 的整数";
+      errEl.hidden = false;
+      mpInput.focus();
+      return;
+    }
+    for (const s of srcs)
+      if (s.type === "dir" && !(s.path || "").trim()) {
+        errEl.textContent = "目录源的路径不能为空";
+        errEl.hidden = false;
+        return;
+      }
+    saveBtn.disabled = true;
+    try {
+      const r = await api("/api/config", {method: "POST", body: {
+        sources: srcs.map(s => s.type === "dir"
+          ? {type: "dir", path: s.path.trim()} : {type: "github"}),
+        proxy: proxyInput.value.trim() || null,
+        max_parallel_jobs: mp}});
+      noteEl.textContent = r.restart_needed
+        ? "已保存。并发任务数在重启 perfbox 后生效"
+        : "已保存";
+      noteEl.hidden = false;
+      await refreshAll();
+    } catch (e) {
+      if (!(e instanceof GateError)) {
+        errEl.textContent = e.message;
+        errEl.hidden = false;
+      }
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  const sheet = el("div", {class: "sheet"}, [
+    el("div", {class: "formrow"}, [
+      el("div", {class: "flabel", text: "工具源"}),
+      el("div", {class: "field"}, [
+        listEl,
+        el("div", {class: "srcbtns"}, [
+          el("button", {type: "button", text: "添加目录源",
+            onclick: () => { srcs.push({type: "dir", path: ""}); redraw(); }}),
+          el("button", {type: "button", text: "添加 GitHub 源",
+            onclick: () => { srcs.push({type: "github"}); redraw(); }}),
+        ]),
+        el("div", {class: "help",
+          text: "按顺序查找，用第一个有该工具的源。不配置时使用 GitHub。"}),
+      ]),
+    ]),
+    el("div", {class: "formrow"}, [
+      el("div", {class: "flabel", text: "代理"}),
+      el("div", {class: "field"}, [proxyInput]),
+    ]),
+    el("div", {class: "formrow"}, [
+      el("div", {class: "flabel", text: "并发任务数"}),
+      el("div", {class: "field"}, [
+        mpInput,
+        el("div", {class: "help", text: "同时运行的任务数，保存后重启生效。"}),
+      ]),
+    ]),
+    el("div", {class: "submitline"}, [
+      errEl, noteEl,
+      el("div", {class: "actions"}, [saveBtn]),
+    ]),
+  ]);
+  const kids = [
+    el("div", {class: "page-head"}, [el("h1", {text: "设置"})]),
+  ];
+  if (cfg.error)
+    kids.push(el("div", {class: "banner", style: "margin-bottom:12px",
+      text: `配置文件无效：${cfg.error}`}));
+  kids.push(sheet,
+    el("p", {class: "muted small", style: "margin-top:10px",
+             text: `配置文件：${cfg.path}`}));
+  main.replaceChildren(...kids);
+}
+
 // ------------------------------------------------------------- 启动
 window.addEventListener("hashchange", () => { render(); });
+function opsBusy() {
+  const st = S.state;
+  return !!(st && (st.checking ||
+    (st.tools || []).some(t => t.op && !t.op.finished)));
+}
+async function pollLoop() {
+  await refreshAll();
+  const r = currentRoute();
+  if (r.name === "home") renderHome();
+  setTimeout(pollLoop, opsBusy() ? 1000 : 5000);
+}
 async function boot() {
   if (!TOKEN) return showGate();
   await refreshAll();
   await render();
-  setInterval(async () => {
-    await refreshAll();
-    // 侧栏徽标更新；首页/历史页停留时也顺带刷新
-    const r = currentRoute();
-    if (r.name === "home") renderHome();
-  }, 5000);
+  pollLoop();
 }
 boot();
