@@ -288,7 +288,7 @@ perfbox manifest check <file>   校验一份清单
 - [x] 3. `sources`：先 `DirSource`，后 `GitHubSource`。
 - [x] 4. `store`：安装、回退、删除、兼容闸门。
 - [x] 5. `catalog.json`：先收 memscope、perfetto-trim 两条。
-- [ ] 6. `cli`：`list`、`install`、`update`、`rollback`、`run`、`manifest check`。
+- [x] 6. `cli`：`list`、`install`、`update`、`rollback`、`run`、`manifest check`。
 - [ ] 7. `tools/stamp_manifest.py`：供工具仓库拷贝。
 
 工具侧：
