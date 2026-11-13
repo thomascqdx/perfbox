@@ -30,7 +30,7 @@ class Config:
     max_parallel_jobs: int = 1
 
 
-def _validate(data) -> Config:
+def validate(data) -> Config:
     if not isinstance(data, dict):
         raise ValueError("不是 JSON 对象")
     sources = data.get("sources", [{"type": "github"}])
@@ -59,7 +59,7 @@ def load_config() -> Config:
     if not f.exists():
         return Config()
     try:
-        return _validate(json.loads(f.read_text(encoding="utf-8")))
+        return validate(json.loads(f.read_text(encoding="utf-8")))
     except (ValueError, OSError) as e:
         raise ConfigError(f"{f}：{e}") from e
 

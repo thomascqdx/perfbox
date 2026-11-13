@@ -341,7 +341,7 @@ perfbox manifest check <file>   校验一份清单
    - 应用型命令显示「打开」按钮，在新标签页进入工具自带界面。
    - 工具管理：安装进度、一键全部更新、回退到上一版、卸载。
    - 设置页：源列表（目录或 GitHub）、代理。
-- [ ] 4. 后台更新检查与 `update-cache.json`。
+- [x] 4. 后台更新检查与 `update-cache.json`。
 
 验收：
 
