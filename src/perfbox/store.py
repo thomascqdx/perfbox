@@ -113,6 +113,17 @@ def _installed_at(tool_id: str, version: str) -> InstalledTool | None:
                          manifest=parse(mf.read_bytes()))
 
 
+def previous_version(tool_id: str) -> str | None:
+    """current.json 里的上一版本号；目录不完整（缺清单）时视为没有。"""
+    cur = _read_current(tool_id)
+    prev = cur.get("previous") if cur else None
+    if not isinstance(prev, str) or not prev:
+        return None
+    if not (_tools_dir(tool_id) / prev / "perfbox-tool.json").is_file():
+        return None
+    return prev
+
+
 def installed(tool_id: str) -> InstalledTool | None:
     cur = _read_current(tool_id)
     if cur is None:

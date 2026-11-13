@@ -331,3 +331,40 @@ class TestRemove:
             assert tdir(home).exists()
         store.remove("memscope")
         assert not tdir(home).exists()
+
+class TestPreviousVersion:
+    def test_none_when_not_installed(self, env):
+        home, _ = env
+        assert store.previous_version("memscope") is None
+
+    def test_none_after_first_install(self, env):
+        home, src = env
+        publish(src, "memscope", "1.0.0")
+        store.install(entry_of(), [DirSource(src)])
+        assert store.previous_version("memscope") is None
+
+    def test_returns_previous_after_update(self, env):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"v1")
+        store.install(entry_of(), [DirSource(src)])
+        publish(src, "memscope", "1.1.0", body=b"v2")
+        store.install(entry_of(), [DirSource(src)])
+        assert store.previous_version("memscope") == "1.0.0"
+
+    def test_none_when_dir_incomplete(self, env):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"v1")
+        store.install(entry_of(), [DirSource(src)])
+        publish(src, "memscope", "1.1.0", body=b"v2")
+        store.install(entry_of(), [DirSource(src)])
+        (tdir(home) / "1.0.0" / "perfbox-tool.json").unlink()
+        assert store.previous_version("memscope") is None
+
+    def test_none_when_dir_missing(self, env):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"v1")
+        store.install(entry_of(), [DirSource(src)])
+        cur = tdir(home) / "current.json"
+        cur.write_text(json.dumps({"version": "1.0.0", "previous": "9.9.9"}),
+                       encoding="utf-8")
+        assert store.previous_version("memscope") is None
