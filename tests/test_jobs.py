@@ -77,6 +77,7 @@ def _pid_alive(pid):
 def test_default_out_dir_and_files(env):
     home, workdir, j = env
     job = j.start_job(make_tool(), "run", {})
+    assert job.command_title == "运行"
     assert re.fullmatch(r"\d{8}-\d{6}-memscope-[0-9a-f]{4}", job.id)
     job = j.wait(job.id, 30)
     assert job.state == "succeeded", job.error

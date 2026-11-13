@@ -2,15 +2,21 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>perfbox</title>
+<link rel="icon" href="favicon.ico">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-<h1>perfbox</h1>
-<p>工作台界面将在 M2 里程碑提供。</p>
-<script>
-// token 在 URL fragment #t= 里，API 请求要带 X-Perfbox-Token 头。
-window.PERFBOX_TOKEN = location.hash.startsWith("#t=")
-    ? location.hash.slice(3) : "";
-</script>
+<div class="app" id="app">
+  <aside class="rail" id="rail" aria-label="工具导航"></aside>
+  <div class="mainwrap">
+    <header class="statusline" id="statusline"></header>
+    <div class="banner" id="banner" hidden></div>
+    <main class="main" id="main" tabindex="-1"></main>
+  </div>
+</div>
+<noscript><p class="noscript">本界面需要启用 JavaScript。</p></noscript>
+<script type="module" src="app.js"></script>
 </body>
 </html>

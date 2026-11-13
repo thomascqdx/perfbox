@@ -53,6 +53,7 @@ class Job:
     outputs: list[dict]
     error: str | None
     host_pid: int | None        # 提交任务的宿主进程 pid（旧记录为 None）
+    command_title: str | None   # 清单里的命令名（旧记录为 None）
 
     def to_dict(self) -> dict:
         d = {k: getattr(self, k) for k in _FIELDS}
@@ -63,7 +64,7 @@ class Job:
 
 _FIELDS = ("id", "tool", "version", "command", "values", "argv",
            "out_dir", "state", "exit_code", "created", "started",
-           "finished", "outputs", "error", "host_pid")
+           "finished", "outputs", "error", "host_pid", "command_title")
 
 
 class _Rt:
@@ -234,8 +235,10 @@ class Jobs:
     def _from_dict(d) -> Job:
         if not isinstance(d, dict):
             raise ValueError("job.json 不是对象")
-        kw = {k: d[k] for k in _FIELDS if k != "host_pid"}
+        kw = {k: d[k] for k in _FIELDS
+              if k not in ("host_pid", "command_title")}
         kw["host_pid"] = d.get("host_pid")
+        kw["command_title"] = d.get("command_title")
         return Job(**kw)
 
     def _mark_stale(self, job: Job) -> None:
@@ -321,7 +324,8 @@ class Jobs:
                   command=command_id, values=dict(values), argv=argv,
                   out_dir=str(od), state="queued", exit_code=None,
                   created=time.time(), started=None, finished=None,
-                  outputs=[], error=None, host_pid=os.getpid())
+                  outputs=[], error=None, host_pid=os.getpid(),
+                  command_title=cmd.title)
         self._save(job)
         (self._home / "jobs" / job.id / "log.txt").touch()
         # 占用已装版本，直到任务终态，防止被剪枝
