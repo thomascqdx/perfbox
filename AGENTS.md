@@ -5,7 +5,7 @@ perfbox 是性能分析工具箱的宿主：获取、运行、管理各独立工
 ## 先读
 
 - `CONTEXT.md`：术语表。代码、文档、界面文案一律使用其中的术语。
-- `docs/implementation-plan.md`：架构、里程碑、各工具仓库的改动清单。
+- `docs/implementation-plan.md`：架构、里程碑、各工具仓库的改动清单。第 4 节的勾选框是进度记录，完成一项勾一项。
 - `docs/tool-manifest.md`：`perfbox-tool.json` 规范，工具接入的唯一依据。
 - `docs/adr/`：不可轻易推翻的决策及原因。
 
@@ -14,6 +14,7 @@ perfbox 是性能分析工具箱的宿主：获取、运行、管理各独立工
 - **运行时只用 Python 标准库**。`src/perfbox/` 不得 import 第三方包；第三方包只允许出现在 `tests/` 和 `scripts/`。
 - **不放任何工具的分析代码或参数定义**。工具的参数只来自它自己发布的清单（见 ADR 0002）。
 - **只监听 127.0.0.1**。
+- **结果与宿主数据不混放**。任务结果放在工作目录下的 `out\<任务标识>\`；宿主自己的数据（工具库、任务记录、日志、配置）放在 `%LOCALAPPDATA%\perfbox`。
 - 前端用原生 HTML/CSS/JS，不引入构建步骤。
 
 ## 环境
@@ -39,4 +40,4 @@ perfbox 是性能分析工具箱的宿主：获取、运行、管理各独立工
 - 多行提交信息先写到临时文件，再 `git commit -F <file>`。
 - 版本号唯一来源是 `src/perfbox/__init__.py` 的 `__version__`。每个里程碑完成后打附注 tag `vX.Y.Z`，打在改版本号的那个提交上。
 - 未经用户明确要求不要 push，包括 tag。
-- 向任何工具仓库的 GitHub Release 上传文件，或创建新的 GitHub 仓库，都要先得到用户明确同意。
+- 向任何工具仓库的 GitHub Release 上传文件，或创建新的 GitHub 仓库，都要先得到用户明确同意。已同意的范围见 `docs/implementation-plan.md` 第 9 节。
