@@ -1046,10 +1046,24 @@ function opsBusy() {
   return !!(st && (st.checking ||
     (st.tools || []).some(t => t.op && !t.op.finished)));
 }
+let viewSig = "";
+function stateSig() {
+  const st = S.state;
+  return st ? JSON.stringify(
+    [st.tools, st.checked, st.checking, S.jobs]) : "";
+}
 async function pollLoop() {
   await refreshAll();
+  const sig = stateSig();
   const r = currentRoute();
-  if (r.name === "home") renderHome();
+  // 只读视图（首页/工具管理/历史）在状态变化时重渲；
+  // 工具页/设置页可能有用户输入，不自动重渲。
+  if (sig !== viewSig) {
+    if (r.name === "tools") renderTools();
+    else if (r.name === "history") renderHistory();
+    else if (r.name === "home") renderHome();
+  }
+  viewSig = sig;
   setTimeout(pollLoop, opsBusy() ? 1000 : 5000);
 }
 async function boot() {
