@@ -315,7 +315,7 @@ perfbox manifest check <file>   校验一份清单
 目标：在浏览器里完成「选 memscope → 填两个包 → 看日志 → 打开报告」。
 
 - [x] 1. `jobs`：任务部分——结果目录、排队、Job Object、日志、取消、结果收集、历史持久化。
-- [ ] 2. `server`：token 与 Host 校验、静态文件、`/api/state`、`/api/tools/<id>`、`/api/jobs*`、`/api/pick`、`/api/reveal`、`/files/`。
+- [x] 2. `server`：token 与 Host 校验、静态文件、`/api/state`、`/api/tools/<id>`、`/api/jobs*`、`/api/pick`、`/api/reveal`、`/files/`。
 - [ ] 3. 前端（开始前加载 `frontend-design` 技能）：
    - 左侧按问题域列出工具，标明未安装、已安装、有更新。
    - 工具页：命令切换、按清单生成的表单、高级选项折叠、结果目录（显示默认值，可改）、提交。
