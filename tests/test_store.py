@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,15 @@ class TestInstall:
         assert inst.version == "1.0.0"
         assert (vdir / "perfbox-tool.json").exists()
         assert (vdir / "memscope-1.0.0.exe").read_bytes() == b"EXE"
+
+    def test_zip_install_keeps_original(self, env):
+        home, src = env
+        z = make_zip({"pkg/tool.exe": b"Z", "pkg/x.dat": b"d"})
+        publish(src, "memscope", "1.0.0", body=z, kind="zip",
+                entry=["tool.exe"])
+        inst = store.install(entry_of(), [DirSource(src)])
+        kept = inst.root / ".artifact" / "memscope-1.0.0.zip"
+        assert kept.read_bytes() == z
 
     def test_zip_top_dir_child_same_name(self, env):
         home, src = env
@@ -371,6 +381,79 @@ class TestRemove:
             assert tdir(home).exists()
         store.remove("memscope")
         assert not tdir(home).exists()
+
+class TestExport:
+    def test_export_exe_and_zip(self, env, tmp_path, monkeypatch):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"EXE")
+        z = make_zip({"pkg/run.exe": b"R"})
+        publish(src, "blkscope", "0.5.0", body=z, kind="zip",
+                entry=["run.exe"])
+        store.install(entry_of(), [DirSource(src)])
+        store.install(entry_of("blkscope"), [DirSource(src)])
+        dest = tmp_path / "out-src"
+        results = store.export(dest)
+        by_id = {r["id"]: r for r in results}
+        assert by_id["memscope"]["status"] == "exported"
+        assert by_id["blkscope"]["status"] == "exported"
+        assert by_id["memscope"]["version"] == "1.0.0"
+        # 目录源布局：产物 + 清单逐字节一致
+        d = dest / "memscope" / "1.0.0"
+        assert (d / "memscope-1.0.0.exe").read_bytes() == b"EXE"
+        assert (d / "perfbox-tool.json").read_bytes() == \
+            (tdir(home) / "1.0.0" / "perfbox-tool.json").read_bytes()
+        assert (dest / "blkscope" / "0.5.0" /
+                "blkscope-0.5.0.zip").read_bytes() == z
+        # 往返：导出目录直接作为源，在另一个 home 里可装
+        monkeypatch.setenv("PERFBOX_HOME", str(tmp_path / "home2"))
+        inst = store.install(entry_of("blkscope"), [DirSource(dest)])
+        assert (inst.root / "run.exe").read_bytes() == b"R"
+
+    def test_export_unchanged_on_reexport(self, env, tmp_path):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"EXE")
+        store.install(entry_of(), [DirSource(src)])
+        dest = tmp_path / "out-src"
+        store.export(dest)
+        results = store.export(dest)
+        assert [r["status"] for r in results] == ["unchanged"]
+
+    def test_export_skips_zip_without_original(self, env, tmp_path):
+        home, src = env
+        z = make_zip({"pkg/run.exe": b"R"})
+        publish(src, "memscope", "1.0.0", body=z, kind="zip",
+                entry=["run.exe"])
+        inst = store.install(entry_of(), [DirSource(src)])
+        shutil.rmtree(inst.root / ".artifact")
+        r = store.export(tmp_path / "out-src")[0]
+        assert r["status"] == "skipped"
+        assert r["reason"] == "安装时未保留原始 zip，请卸载后重新安装"
+
+    def test_export_skips_checksum_mismatch(self, env, tmp_path):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"EXE")
+        inst = store.install(entry_of(), [DirSource(src)])
+        (inst.root / "memscope-1.0.0.exe").write_bytes(b"tampered")
+        r = store.export(tmp_path / "out-src")[0]
+        assert r["status"] == "skipped"
+        assert "校验不符" in r["reason"]
+
+    def test_export_leaves_unrelated_dest_files(self, env, tmp_path):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"EXE")
+        store.install(entry_of(), [DirSource(src)])
+        dest = tmp_path / "out-src"
+        (dest / "memscope" / "1.0.0").mkdir(parents=True)
+        keep = dest / "memscope" / "1.0.0" / "notes.txt"
+        keep.write_text("留着我", encoding="utf-8")
+        (dest / "other.txt").write_text("x", encoding="utf-8")
+        store.export(dest)
+        assert keep.read_text(encoding="utf-8") == "留着我"
+        assert (dest / "other.txt").read_text(encoding="utf-8") == "x"
+
+    def test_export_nothing_installed(self, env, tmp_path):
+        assert store.export(tmp_path / "out-src") == []
+
 
 class TestPreviousVersion:
     def test_none_when_not_installed(self, env):

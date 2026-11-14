@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -93,6 +94,25 @@ def _cmd_rollback(tool_id: str) -> int:
     return 0
 
 
+def _cmd_export(dest: str) -> int:
+    results = store.export(Path(dest))
+    skipped = False
+    for r in results:
+        if r["status"] == "skipped":
+            skipped = True
+            print(f"跳过 {r['id']} {r['version']}：{r['reason']}")
+        elif r["status"] == "unchanged":
+            print(f"未变 {r['id']} {r['version']}")
+        else:
+            print(f"导出 {r['id']} {r['version']}")
+    if not results:
+        print("没有已安装的工具")
+    print("把这个目录当工具源用：设环境变量 PERFBOX_SOURCE 指向它，"
+          "或在设置页/配置文件 sources 里加 "
+          '{"type": "dir", "path": "%s"}' % dest)
+    return 1 if skipped else 0
+
+
 def _cmd_manifest_check(file: str, template: bool) -> int:
     text = Path(file).read_bytes()
     m = parse(text, template=template)
@@ -118,7 +138,12 @@ def _run(args: list[str]) -> int:
     if inst is None:
         inst = store.install(catalog.get(tool_id), _sources(), _progress())
     with store.use(inst):
-        return subprocess.call(inst.entry() + rest)
+        kw = {}
+        if getattr(sys, "frozen", False):
+            # 冻结的宿主会把引导环境传给冻结的工具，让它复位
+            kw["env"] = dict(os.environ,
+                             PYINSTALLER_RESET_ENVIRONMENT="1")
+        return subprocess.call(inst.entry() + rest, **kw)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -140,6 +165,8 @@ def _build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("rollback", help="回退到上一版")
     pr.add_argument("tool")
     sub.add_parser("run", help="运行工具，参数原样传递")
+    pe = sub.add_parser("export", help="把已装工具导出为目录源布局")
+    pe.add_argument("dir", help="导出到的目录")
     pm = sub.add_parser("manifest", help="清单操作")
     msub = pm.add_subparsers(dest="mcmd", required=True)
     mc = msub.add_parser("check", help="校验一份清单")
@@ -173,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_update(ns.tool, ns.all)
         if ns.cmd == "rollback":
             return _cmd_rollback(ns.tool)
+        if ns.cmd == "export":
+            return _cmd_export(ns.dir)
         if ns.cmd == "manifest" and ns.mcmd == "check":
             return _cmd_manifest_check(ns.file, ns.template)
         parser.print_help()

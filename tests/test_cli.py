@@ -1,12 +1,15 @@
 import json
+import os
+import shutil
 import subprocess
+import sys
 
 import pytest
 
 import perfbox
-from perfbox import cli
+from perfbox import cli, store
 
-from helpers import make_manifest, publish
+from helpers import make_manifest, make_zip, publish
 
 
 @pytest.fixture
@@ -140,6 +143,61 @@ def test_run_no_source_access_when_installed(env, capsys, monkeypatch):
     monkeypatch.setenv("PERFBOX_SOURCE", str(src / "nonexistent"))
     assert cli.main(["run", "memscope", "-V"]) == 0
     assert len(calls) == 2
+
+
+def test_run_frozen_passes_reset_env(env, capsys, monkeypatch):
+    home, src = env
+    publish(src, "memscope", "1.0.0", body=b"E")
+    cli.main(["install", "memscope"])
+    capsys.readouterr()
+    seen = []
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(subprocess, "call",
+                        lambda *a, **k: seen.append((a, k)) or 0)
+    assert cli.main(["run", "memscope", "-V"]) == 0
+    child_env = seen[0][1]["env"]
+    assert child_env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    # 只加这一个变量；不加 PYTHONIOENCODING（继承终端）
+    added = {k: v for k, v in child_env.items() if k not in os.environ}
+    assert added == {"PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+def test_run_not_frozen_no_env_override(env, capsys, monkeypatch):
+    home, src = env
+    publish(src, "memscope", "1.0.0", body=b"E")
+    cli.main(["install", "memscope"])
+    capsys.readouterr()
+    seen = []
+    monkeypatch.setattr(subprocess, "call",
+                        lambda *a, **k: seen.append((a, k)) or 0)
+    assert cli.main(["run", "memscope", "-V"]) == 0
+    assert "env" not in seen[0][1]
+
+
+def test_export(env, capsys, tmp_path):
+    home, src = env
+    publish(src, "memscope", "1.0.0", body=b"E")
+    cli.main(["install", "memscope"])
+    dest = tmp_path / "src-out"
+    assert cli.main(["export", str(dest)]) == 0
+    out = capsys.readouterr().out
+    assert "导出 memscope 1.0.0" in out
+    assert "PERFBOX_SOURCE" in out
+    assert cli.main(["export", str(dest)]) == 0
+    assert "未变 memscope 1.0.0" in capsys.readouterr().out
+
+
+def test_export_skipped_exit_1(env, capsys, tmp_path):
+    home, src = env
+    z = make_zip({"pkg/run.exe": b"R"})
+    publish(src, "memscope", "1.0.0", body=z, kind="zip",
+            entry=["run.exe"])
+    cli.main(["install", "memscope"])
+    inst = store.installed("memscope")
+    shutil.rmtree(inst.root / ".artifact")
+    assert cli.main(["export", str(tmp_path / "o")]) == 1
+    out = capsys.readouterr().out
+    assert "跳过" in out and "重新安装" in out
 
 
 def test_manifest_check(env, capsys, tmp_path):

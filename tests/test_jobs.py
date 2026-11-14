@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from perfbox import jobs as jobs_mod
 from perfbox.jobs import Jobs, JobError, JobNotFound
 from perfbox.manifest import (Artifact, Command, Manifest, Output,
                               OutputSpec, Param)
@@ -77,6 +78,37 @@ def _pid_alive(pid):
         return code.value == 259        # STILL_ACTIVE
     finally:
         k.CloseHandle(h)
+
+
+# ------------------------------------------------------------ 子进程环境
+
+def _popen_spy(monkeypatch):
+    seen = []
+    real = subprocess.Popen
+    monkeypatch.setattr(
+        jobs_mod.subprocess, "Popen",
+        lambda *a, **k: (seen.append(k.get("env")), real(*a, **k))[1])
+    return seen
+
+
+def test_job_env_has_reset_when_frozen(env, monkeypatch):
+    home, workdir, j = env
+    seen = _popen_spy(monkeypatch)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    job = j.start_job(make_tool(), "run", {})
+    job = j.wait(job.id, 30)
+    assert job.state == "succeeded", job.error
+    assert seen and seen[0]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert seen[0]["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_job_env_no_reset_when_not_frozen(env, monkeypatch):
+    home, workdir, j = env
+    seen = _popen_spy(monkeypatch)
+    job = j.start_job(make_tool(), "run", {})
+    job = j.wait(job.id, 30)
+    assert job.state == "succeeded", job.error
+    assert seen and "PYINSTALLER_RESET_ENVIRONMENT" not in seen[0]
 
 
 # ------------------------------------------------------------ 结果目录

@@ -15,6 +15,7 @@ import re
 import secrets
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -187,6 +188,16 @@ if os.name == "nt":
             if self.handle:
                 self._k.CloseHandle(self.handle)
                 self.handle = None
+
+
+def _child_env() -> dict:
+    """工具子进程环境；冻结运行时让子 exe 的引导器复位继承的环境。"""
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
+    if getattr(sys, "frozen", False):
+        env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
 
 
 def _free_port() -> int:
@@ -534,9 +545,7 @@ class Jobs:
                       command=command_id, command_title=cmd.title,
                       state="starting", url=None, pid=None, port=port,
                       started=time.time(), error=None)
-            env = dict(os.environ)
-            env["PYTHONIOENCODING"] = "utf-8"
-            env["PYTHONUNBUFFERED"] = "1"
+            env = _child_env()
             try:
                 proc = subprocess.Popen(
                     argv, cwd=str(self._workdir),
@@ -675,9 +684,7 @@ class Jobs:
 
     def _run(self, job: Job, rt: _Rt) -> None:
         self._set_state(job, "running", started=time.time())
-        env = dict(os.environ)
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUNBUFFERED"] = "1"
+        env = _child_env()
         try:
             proc = subprocess.Popen(
                 job.argv, cwd=str(self._workdir),

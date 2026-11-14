@@ -250,7 +250,9 @@ def install(tool: CatalogEntry, sources: list[Source],
             shutil.move(str(part), tmp / m.artifact.name)
         else:
             _extract_zip(part, tmp)
-            part.unlink()
+            adir = tmp / ".artifact"
+            adir.mkdir()
+            shutil.move(str(part), adir / m.artifact.name)
         (tmp / "perfbox-tool.json").write_bytes(raw)
         if not (tmp / m.artifact.entry[0]).exists():
             raise StoreError(
@@ -266,6 +268,94 @@ def install(tool: CatalogEntry, sources: list[Source],
     _write_current(tool.id, m.version, cur["version"] if cur else None)
     _prune(tool.id, {m.version, cur["version"] if cur else ""})
     return _installed_at(tool.id, m.version)
+
+
+def _atomic_copy(src: Path, dst: Path) -> None:
+    fd, tmp = tempfile.mkstemp(dir=dst.parent,
+                             prefix=f".{dst.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f, open(src, "rb") as s:
+            shutil.copyfileobj(s, f)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write(dst: Path, data: bytes) -> None:
+    fd, tmp = tempfile.mkstemp(dir=dst.parent,
+                             prefix=f".{dst.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _export_one(inst: InstalledTool, dest: Path) -> dict:
+    m = inst.manifest
+    name = m.artifact.name
+    src = (inst.root / ".artifact" / name if m.artifact.kind == "zip"
+           else inst.root / name)
+    r = {"id": inst.id, "version": inst.version, "status": "exported"}
+    if not src.is_file():
+        r["status"] = "skipped"
+        r["reason"] = ("安装时未保留原始 zip，请卸载后重新安装"
+                       if m.artifact.kind == "zip"
+                       else "产物文件缺失，请卸载后重新安装")
+        return r
+    try:
+        _verify(src, m)
+    except ChecksumError as e:
+        r["status"] = "skipped"
+        r["reason"] = str(e)
+        return r
+    mf_bytes = (inst.root / "perfbox-tool.json").read_bytes()
+    vdir = dest / inst.id / inst.version
+    d_art = vdir / name
+    d_mf = vdir / "perfbox-tool.json"
+    try:
+        _verify(d_art, m)
+        same_art = d_art.is_file()
+    except (ChecksumError, OSError):
+        same_art = False
+    same_mf = d_mf.is_file() and d_mf.read_bytes() == mf_bytes
+    if same_art and same_mf:
+        r["status"] = "unchanged"
+        return r
+    vdir.mkdir(parents=True, exist_ok=True)
+    if not same_art:
+        _atomic_copy(src, d_art)
+    if not same_mf:
+        _atomic_write(d_mf, mf_bytes)
+    return r
+
+
+def export(dest: Path) -> list[dict]:
+    """把全部已装工具的当前版本导出成目录源布局（供共享盘/离线分发）。
+
+    返回每个工具的 {id, version, status, reason?}；dest 里无关内容不动。
+    """
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    results = []
+    troot = paths.home() / "tools"
+    if troot.is_dir():
+        for sub in sorted(troot.iterdir()):
+            if not sub.is_dir():
+                continue
+            inst = installed(sub.name)
+            if inst is not None:
+                results.append(_export_one(inst, dest))
+    return results
 
 
 def check_update(tool: CatalogEntry, sources: list[Source]) -> str | None:
