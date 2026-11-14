@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from perfbox import store
+from perfbox import store, updates
 from perfbox.jobs import Jobs
 from perfbox.server import Host, create_server
 from perfbox.sources import DirSource
@@ -25,6 +25,10 @@ def env(tmp_path, monkeypatch):
     workdir.mkdir()
     monkeypatch.setenv("PERFBOX_HOME", str(home))
     monkeypatch.delenv("PERFBOX_SOURCE", raising=False)
+    # 测试不联网：宿主更新检查换成桩
+    monkeypatch.setattr(updates, "check_host",
+                        lambda **kw: {"latest": None, "url": "u",
+                                      "error": None})
     src = tmp_path / "dirsrc"
     src.mkdir()
     j = Jobs(home, workdir)
@@ -399,6 +403,35 @@ def test_state_update_flag(env):
     t = {t["id"]: t for t in j["tools"]}["memscope"]
     assert t["installed"] == "1.0.0"
     assert t["latest"] == "2.0.0" and t["update"] == "2.0.0"
+
+
+def test_state_host_update(env, monkeypatch):
+    host, src, _ = env
+
+    def wait_checked():
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            st, j, _ = _req(host, "GET", "/api/state")
+            assert st == 200
+            if not j["checking"] and j["checked"] > 0:
+                return j
+            time.sleep(0.1)
+        raise AssertionError("check timeout")
+
+    monkeypatch.setattr(
+        updates, "check_host",
+        lambda **kw: {"latest": "9.9.9", "url": "http://x/dl",
+                      "error": None})
+    host.recheck_updates(force=True)
+    j = wait_checked()
+    assert j["host_update"] == {"latest": "9.9.9", "url": "http://x/dl"}
+    # 不高于宿主版本 → 不提示
+    monkeypatch.setattr(
+        updates, "check_host",
+        lambda **kw: {"latest": "0.0.1", "url": "u", "error": None})
+    host.recheck_updates(force=True)
+    j = wait_checked()
+    assert j["host_update"] is None
 
 
 # ------------------------------------------------------- M3：安装操作

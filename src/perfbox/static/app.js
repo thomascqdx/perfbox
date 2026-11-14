@@ -220,6 +220,12 @@ function renderStatusline() {
     el("span", {class: "path", title: S.state.workdir,
                 text: S.state.workdir}),
     copyBtn(S.state.workdir));
+  if (S.state.host_update) {
+    statusEl.append(" ", el("span", {class: "hostupd"}, [
+      `perfbox ${S.state.host_update.latest} 可用 `,
+      el("a", {href: S.state.host_update.url, target: "_blank",
+               rel: "noopener", text: "下载新版"})]));
+  }
   if (S.state.config_error) {
     bannerEl.textContent =
       `配置文件无效：${S.state.config_error}（请检查 ` +

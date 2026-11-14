@@ -209,10 +209,20 @@ class Host:
                           "incompatible": ce.get("incompatible"),
                           "op": op,
                           "app": live_apps.get(e.id)})
+        host_update = None
+        hc = cache.get("host") or {}
+        latest = hc.get("latest")
+        if latest:
+            try:
+                if version_tuple(latest) > version_tuple(perfbox.__version__):
+                    host_update = {"latest": latest, "url": hc.get("url")}
+            except ValueError:
+                pass
         d = {"version": perfbox.__version__, "workdir": str(self.workdir),
              "sources": labels, "domains": _DOMAINS, "tools": tools,
              "checked": cache.get("checked", 0),
-             "checking": self._checking}
+             "checking": self._checking,
+             "host_update": host_update}
         if err:
             d["config_error"] = err
         return d
@@ -229,7 +239,7 @@ class Host:
             try:
                 self._cache = updates.check_all(
                     catalog.entries(), self._sources_fn(), paths.home(),
-                    force=force)
+                    force=force, proxy=paths.load_config().proxy)
             except Exception:  # noqa: BLE001 - 检查失败不影响界面
                 pass
             finally:
