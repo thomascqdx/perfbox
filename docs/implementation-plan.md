@@ -176,6 +176,7 @@ def shutdown() -> None                                            # 结束全部
 ├─ tools\<id>\
 │    ├─ current.json            {"version": "0.8.1", "previous": "0.8.0"}
 │    └─ <version>\              perfbox-tool.json + 产物（zip 已解压）
+│         └─ .artifact\<name>   zip 产物的原件（校验过），供 perfbox export 导出目录源
 └─ jobs\<任务标识>\
      ├─ job.json                工具、版本、命令行、参数、起止时间、退出码、结果目录的绝对路径、结果列表
      └─ log.txt
