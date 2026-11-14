@@ -31,11 +31,11 @@ v1 不做：
 | 工具标识 | 界面名称 | 问题域 | 本地目录 | GitHub 仓库 |
 |---|---|---|---|---|
 | `memscope` | 内存测试包 A/B 对比 | 内存 | `memscope` | `thomascqdx/memscope`（已有，public） |
-| `vmscope` | 整机内存时序分析 | 内存 | `vmscope` | `thomascqdx/vmscope`（待建） |
-| `meminfo-diff` | meminfo 双版本对比 | 内存 | `meminfo_diff` | `thomascqdx/meminfo_diff`（待建） |
+| `vmscope` | 整机内存时序分析 | 内存 | `vmscope` | `thomascqdx/vmscope`（2026-11-14 公开） |
+| `meminfo-diff` | meminfo 双版本对比 | 内存 | `meminfo_diff` | `thomascqdx/meminfo_diff`（2026-11-14 公开） |
 | `blkscope` | 块设备 IO 分析 | IO | `blkscope` | `thomascqdx/blkscope`（已有，public） |
-| `jank-analyzer` | 100ms 卡顿主线程分析 | 卡顿 | `jank-100ms-analysis` | `thomascqdx/jank-100ms-analysis`（待建） |
-| `startup-latency` | 启动时延一致性分析 | 启动 | `dynamic_model_tools` | `thomascqdx/dynamic_model_tools`（待建） |
+| `jank-analyzer` | 100ms 卡顿主线程分析 | 卡顿 | `jank-100ms-analysis` | `thomascqdx/jank-100ms-analysis`（2026-11-14 公开） |
+| `startup-latency` | 启动时延一致性分析 | 启动 | `dynamic_model_tools` | `thomascqdx/dynamic_model_tools`（2026-11-14 公开） |
 | `perfetto-trim` | Trace 裁剪与切分 | Trace | `perfetto-trim` | `thomascqdx/perfetto-trim`（已有，public） |
 
 ### 2.2 发版状态
@@ -486,6 +486,7 @@ vmscope、meminfo_diff、jank-100ms-analysis、dynamic_model_tools 四个仓库�
 - 已发布的 exe 不重新构建（5.2 节），所以**宿主必须兼容**：jobs 读日志时按行解码，先试 UTF-8，失败则用系统 ANSI 代码页（`locale.getencoding()`），再失败才用 `errors='replace'`。M2 的 jobs 测试要覆盖 UTF-8、GBK 和非法字节三种行。
 - `ready.url_regex` 只匹配 ASCII 部分，不受编码影响。
 - 工具侧的修正（memscope 补 `encoding='utf-8'`，perfetto-trim 在 `main()` 里加同样的 reconfigure）随各自下一次正常发版进行，不为此单独发版。M4 接入的工具在接入时一并检查。
+- M4 接入时的检查结果：meminfo_diff 和 dynamic_model_tools（冻结后）已在管道下 reconfigure 为 UTF-8，jank 用 `-X utf8` 运行，都是 UTF-8；blkscope 和 vmscope 与 memscope 相同，按系统代码页输出，同样留到下一次正常发版修正。vmscope 和 meminfo_diff 的进度输出没有 `flush=True`，管道下日志会成批到达。环境变量 `PYTHONIOENCODING` 对 PyInstaller 冻结的 exe 不起作用（实测），所以宿主的代码页回退解码必须保留。
 
 ## 8. git 管理
 
@@ -571,6 +572,17 @@ vmscope、meminfo_diff、jank-100ms-analysis、dynamic_model_tools 四个仓库�
 如果第 2、3 步都失败：记下错误原文。应对方案同 11.1，主推共享盘目录源。
 
 参考：本机测试时，不经代理直连 GitHub 下载 10 MB 的产物在约 50% 处超时；经代理一次成功，约 35 秒。
+
+### 11.3 meminfo-diff 用真实数据跑一次（M4）
+
+本机没有真实的 `cat_meminfo` 测试数据，M4 只用按真实格式生成的数据跑通了 meminfo-diff。
+
+1. 准备两个版本的测试目录（Base、Target），目录里有 `cat_meminfo_<时间>_<SN>.txt` 文件，共享盘的 UNC 路径也可以。
+2. 在 perfbox 界面选「内存 → meminfo 双版本对比」，Base 目录和目标目录分别填这两个目录，点「开始任务」。
+3. 任务完成后点「打开主报告」。
+
+期望：任务状态为「成功」，结果里有 `meminfo_diff_<base>_vs_<target>.html` 主报告和（勾选「导出 JSON」时）同名 `.json`；报告里的采样次数、SN 分组和两侧标签与直接运行 `meminfo_diff.exe <Base> <Target>` 的结果一致。
+
 
 ## 附录 A 各工具的命令与参数
 
