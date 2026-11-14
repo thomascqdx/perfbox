@@ -13,6 +13,13 @@
       "summary": "按时间裁剪、切分 perfetto trace，或按关键字查找",
       "domain": "trace",
       "github": "thomascqdx/perfetto-trim"
+    },
+    {
+      "id": "blkscope",
+      "title": "块设备 IO 分析",
+      "summary": "分析 Perfetto trace 中的块设备 IO，每个 trace 输出一份 HTML 报告",
+      "domain": "io",
+      "github": "thomascqdx/blkscope"
     }
   ]
 }
