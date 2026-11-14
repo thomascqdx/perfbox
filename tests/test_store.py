@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -204,6 +205,45 @@ class TestInstall:
         bad = DirSource(src / "nonexistent")
         with pytest.raises(StoreError):
             store.install(entry_of(), [bad])
+
+    def test_install_retries_busy_version_dir(self, env, monkeypatch):
+        # 杀软短暂占用刚解压的版本目录：重命名重试后安装成功
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"EXE")
+        real_replace = os.replace
+        denied = []
+
+        def flaky(src_, dst_):
+            if Path(dst_).name == "1.0.0" and len(denied) < 3:
+                denied.append(dst_)
+                raise PermissionError(5, "拒绝访问")
+            return real_replace(src_, dst_)
+
+        monkeypatch.setattr(store.os, "replace", flaky)
+        monkeypatch.setattr(store.time, "sleep", lambda *_: None)
+        inst = store.install(entry_of(), [DirSource(src)])
+        assert inst.version == "1.0.0"
+        assert (tdir(home) / "1.0.0" / "perfbox-tool.json").exists()
+        assert len(denied) == 3
+
+    def test_install_rename_denied_persistent_cleans_up(self, env,
+                                                        monkeypatch):
+        home, src = env
+        publish(src, "memscope", "1.0.0", body=b"EXE")
+        real_replace = os.replace
+
+        def denied(src_, dst_):
+            if Path(dst_).name == "1.0.0":
+                raise PermissionError(5, "拒绝访问")
+            return real_replace(src_, dst_)
+
+        monkeypatch.setattr(store.os, "replace", denied)
+        monkeypatch.setattr(store.time, "sleep", lambda *_: None)
+        with pytest.raises(PermissionError):
+            store.install(entry_of(), [DirSource(src)])
+        assert not (tdir(home) / "1.0.0").exists()
+        assert not (tdir(home) / "1.0.0.tmp").exists()
+        assert not list((home / "downloads").glob("*.part"))
 
 
 class TestInstalled:

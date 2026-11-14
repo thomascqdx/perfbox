@@ -14,6 +14,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -188,6 +189,19 @@ def _extract_zip(part: Path, dest: Path) -> None:
         shutil.rmtree(staging)
 
 
+def _replace_retry(src: Path, dst: Path,
+                   attempts: int = 50, delay: float = 0.2) -> None:
+    # 杀软等会短暂占用刚写完的版本目录，PermissionError 时重试约 10 秒
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 def _prune(tool_id: str, keep: set[str]) -> None:
     keep |= _in_use_versions(tool_id)
     tdir = _tools_dir(tool_id)
@@ -241,7 +255,7 @@ def install(tool: CatalogEntry, sources: list[Source],
         if not (tmp / m.artifact.entry[0]).exists():
             raise StoreError(
                 f"清单入口 {m.artifact.entry[0]} 在产物中不存在")
-        os.replace(tmp, tdir / m.version)
+        _replace_retry(tmp, tdir / m.version)
     except BaseException:
         try:
             part.unlink(missing_ok=True)
