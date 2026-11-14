@@ -376,7 +376,7 @@ perfbox manifest check <file>   校验一份清单
 - [x] 2. `perfbox export <dir>`：把已装工具写成目录源布局，用于共享盘和离线分发。
 - [x] 3. 宿主新版提示：查 `releases/latest` 的重定向目标，与 `__version__` 比较，界面给出下载链接。
 - [x] 4. `README.md`：面向同事的使用说明——下载、首次运行、结果在哪里、配置共享盘源、离线使用。
-- [ ] 5. 创建 perfbox 的 GitHub release，附件为固定文件名 `perfbox.exe`。
+- [x] 5. 创建 perfbox 的 GitHub release，附件为固定文件名 `perfbox.exe`。
 
 验收：
 
