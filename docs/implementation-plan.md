@@ -516,6 +516,16 @@ vmscope、meminfo_diff、jank-100ms-analysis、dynamic_model_tools 四个仓库�
 3. 分析结果放在工作目录下（3.2 节），不放在 `%LOCALAPPDATA%`。
 4. 为 memscope v0.8.1 和 perfetto-trim v1.3.0 的现有 release 补传清单。
 
+2026-11-14 用户确认（5.3 节检查之后）：
+
+5. vmscope 历史干净，按原历史公开。
+6. meminfo_diff（测试和文档里有内网 IP `172.16.3.144` 与内部测试路径）、jank-100ms-analysis（测试、README、示例里有 4 个真实设备序列号）、dynamic_model_tools（`data/` 是真实 X1202 测试表格，含设备号和内网地址；`verification/` 截图展示同一份数据）都以「清理后快照」公开：
+   - 先把原 `main` 保存为本地分支 `archive/pre-public`，它和原有 tag 都不推送。
+   - 清理：删除 dynamic_model_tools 的 `data/`、`verification/`；把内网地址、设备序列号、具体机型的测试路径换成虚构值。
+   - 用清理后的文件树建一个无父提交，作为新的本地 `main` 和公开仓库的起点；之后的接入提交和发版都在它上面。
+   - 推送前对新历史重跑 5.3 节的扫描，确认干净。
+7. 代码功能逻辑里的品牌和场景名（如 `TRAN_CUJ_SCROLL`、`com.transsion.*` 定制事件适配）保留，只清理具体设备号、内网地址和真实测试数据。
+
 ## 10. 执行方式
 
 - 按里程碑顺序做，一个里程碑的验收全部通过后再进入下一个。
