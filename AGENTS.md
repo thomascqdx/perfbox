@@ -43,6 +43,23 @@ perfbox 是性能分析工具箱的宿主：获取、运行、管理各独立工
 - 改动工具仓库前先读它自己的 `AGENTS.md`，各仓库的版本号规则和提交约定不同。
 - `perfetto-trim/src/pftrim/web/server.py` 是本机 Web 服务的参考实现（token、Host 校验、后台任务、原生文件对话框）。照它的做法写，不要 import 它。
 
+## 打包
+
+```powershell
+build.bat                # 一键：建/补 .venv -> pytest -> 打包 -> exe --version 自检
+build.bat --skip-tests   # 跳过 pytest；--no-pause 结束时不等按键（脚本/CI 调用时加）
+powershell -ExecutionPolicy Bypass -File scripts\build_exe.ps1   # 只打包 -> dist\perfbox.exe
+```
+
+- PyInstaller 单文件、控制台程序；入口 `scripts/perfbox_entry.py`，静态页
+  面打进 `perfbox\static`，`catalog.json` 打进 `perfbox\`，版本信息由
+  `scripts/build_exe.ps1` 按 `perfbox.__version__` 生成。
+- 打包结尾的自检验证 `dist\perfbox.exe --version` 输出恰好 `perfbox <ver>`。
+- 冻结后启动工具子进程（任务、应用、`perfbox run`）都会设
+  `PYINSTALLER_RESET_ENVIRONMENT=1`，让子 exe 的引导器复位继承的宿主
+  引导环境——jobs 里的 `_child_env()` 和 cli `_run` 各有一处，不要漏。
+- release 附件固定为 `perfbox.exe`（见 docs/implementation-plan.md M5）。
+
 ## git
 
 - 分支 `main`，直接在 `main` 上小步提交，一个提交只做一件事。
