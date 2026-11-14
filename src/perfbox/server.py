@@ -378,6 +378,10 @@ class Host:
                 "max_parallel_jobs": cfg.max_parallel_jobs, "error": None}
         if cfg.max_parallel_jobs != self._cfg.max_parallel_jobs:
             resp["restart_needed"] = True
+        if cfg.sources != cur.sources or cfg.proxy != cur.proxy:
+            # 源/代理变了：立刻按新配置重查，不等 TTL
+            self.recheck_updates(force=True)
+            resp["rechecking"] = True
         return resp
 
     def submit_job(self, body: dict):

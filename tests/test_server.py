@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from perfbox import store, updates
+from perfbox import sources, store, updates
 from perfbox.jobs import Jobs
 from perfbox.server import Host, create_server
 from perfbox.sources import DirSource
@@ -692,6 +692,88 @@ def test_config_invalid_file_returns_defaults(tmp_path, monkeypatch):
         assert cfg["error"]
         assert cfg["max_parallel_jobs"] == 1
         assert cfg["sources"] == [{"type": "github"}]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        j.shutdown()
+
+
+def test_config_save_forces_recheck(env, monkeypatch):
+    """改源/代理 → 立即强制重查；只改并发数等无关字段不触发。"""
+    host = env[0]
+    calls = []
+
+    def fake_check_all(entries, srcs, home, **kw):
+        calls.append(kw)
+        return {"checked": time.time(), "tools": {},
+                "host": {"latest": None, "url": "", "error": None}}
+
+    monkeypatch.setattr(updates, "check_all", fake_check_all)
+    st, j, _ = _req(host, "POST", "/api/config",
+                    {"proxy": "http://127.0.0.1:7890"})
+    assert st == 200 and j["rechecking"] is True
+    deadline = time.time() + 10
+    while not calls and time.time() < deadline:
+        time.sleep(0.05)
+    # 更新检查拿到的代理就是刚保存的值
+    assert calls == [{"force": True,
+                      "proxy": "http://127.0.0.1:7890"}]
+    st, j, _ = _req(host, "POST", "/api/config",
+                    {"max_parallel_jobs": 1})
+    assert st == 200 and "rechecking" not in j
+    st, j, _ = _req(host, "POST", "/api/config",
+                    {"proxy": "http://127.0.0.1:7890"})
+    assert st == 200 and "rechecking" not in j
+    time.sleep(0.5)
+    assert len(calls) == 1
+
+
+def test_install_uses_proxy_saved_after_start(tmp_path, monkeypatch):
+    """保存代理后，下一次安装立即用新配置建源，不用重启。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.setenv("PERFBOX_HOME", str(home))
+    monkeypatch.delenv("PERFBOX_SOURCE", raising=False)
+    monkeypatch.setattr(updates, "check_host",
+                        lambda **kw: {"latest": None, "url": "u",
+                                      "error": None})
+    monkeypatch.setattr(updates, "check_all",
+                        lambda *a, **kw: {"checked": 1, "tools": {},
+                                          "host": {}})
+    seen = []
+
+    class NullSource:
+        label = "null"
+
+        def latest_manifest(self, tool):
+            return None
+
+        def fetch_artifact(self, tool, manifest, dest, progress=None):
+            raise AssertionError("unreachable")
+
+    def fake_configured(config):
+        seen.append(config.proxy)
+        return [NullSource()]
+
+    # 默认 sources_fn 每次网络操作都会重建源
+    monkeypatch.setattr(sources, "configured", fake_configured)
+    j = Jobs(home, workdir)
+    host = Host(workdir, jobs=j, check_updates=False)
+    srv, host = create_server(0, host)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        st, resp, _ = _req(host, "POST", "/api/config",
+                           {"proxy": "http://127.0.0.1:9"})
+        assert st == 200
+        st, op, _ = _req(host, "POST", "/api/tools/memscope/install", {})
+        assert st == 202
+        op = _wait_op(host, "memscope")
+        assert op["finished"] is True
+        # 安装（含更新检查）建的源都用了新代理
+        assert seen and all(p == "http://127.0.0.1:9" for p in seen)
     finally:
         srv.shutdown()
         srv.server_close()

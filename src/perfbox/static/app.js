@@ -987,9 +987,8 @@ async function renderSettings() {
           ? {type: "dir", path: s.path.trim()} : {type: "github"}),
         proxy: proxyInput.value.trim() || null,
         max_parallel_jobs: mp}});
-      noteEl.textContent = r.restart_needed
-        ? "已保存。并发任务数在重启 perfbox 后生效"
-        : "已保存";
+      noteEl.textContent = "已保存，源和代理立即生效。" +
+        (r.restart_needed ? "并发任务数在重启 perfbox 后生效。" : "");
       noteEl.hidden = false;
       await refreshAll();
     } catch (e) {
@@ -1019,13 +1018,16 @@ async function renderSettings() {
     ]),
     el("div", {class: "formrow"}, [
       el("div", {class: "flabel", text: "代理"}),
-      el("div", {class: "field"}, [proxyInput]),
+      el("div", {class: "field"}, [proxyInput,
+        el("div", {class: "help",
+          text: "保存后立即生效，之后的下载和更新检查都会使用。"}),
+      ]),
     ]),
     el("div", {class: "formrow"}, [
       el("div", {class: "flabel", text: "并发任务数"}),
       el("div", {class: "field"}, [
         mpInput,
-        el("div", {class: "help", text: "同时运行的任务数，保存后重启生效。"}),
+        el("div", {class: "help", text: "同时运行的任务数，重启 perfbox 后生效。"}),
       ]),
     ]),
     el("div", {class: "submitline"}, [
