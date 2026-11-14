@@ -356,8 +356,8 @@ perfbox manifest check <file>   校验一份清单
 逐个接入，每接入一个，工具仓库和本仓库各提交一次。每个工具的步骤见 5.1 节，命令与参数见附录 A。
 
 - [x] 1. blkscope：仓库已在 GitHub，只缺 release。
-- [ ] 2. vmscope。
-- [ ] 3. meminfo_diff。
+- [x] 2. vmscope。
+- [x] 3. meminfo_diff。
 - [ ] 4. jank-100ms-analysis：第一个 zip 产物，验证 `entry` 列表和去顶层目录。
 - [ ] 5. dynamic_model_tools：目录型 zip，验证 `output.fresh`。
 

@@ -20,6 +20,20 @@
       "summary": "分析 Perfetto trace 中的块设备 IO，每个 trace 输出一份 HTML 报告",
       "domain": "io",
       "github": "thomascqdx/blkscope"
+    },
+    {
+      "id": "vmscope",
+      "title": "整机内存时序分析",
+      "summary": "解析 mobilelog 里的 kernel log 与 events_log，输出整机内存时序报告",
+      "domain": "memory",
+      "github": "thomascqdx/vmscope"
+    },
+    {
+      "id": "meminfo-diff",
+      "title": "meminfo 双版本对比",
+      "summary": "对比两个版本的 cat_meminfo 采样，输出单文件 HTML 报告",
+      "domain": "memory",
+      "github": "thomascqdx/meminfo_diff"
     }
   ]
 }
