@@ -358,8 +358,8 @@ perfbox manifest check <file>   校验一份清单
 - [x] 1. blkscope：仓库已在 GitHub，只缺 release。
 - [x] 2. vmscope。
 - [x] 3. meminfo_diff。
-- [ ] 4. jank-100ms-analysis：第一个 zip 产物，验证 `entry` 列表和去顶层目录。
-- [ ] 5. dynamic_model_tools：目录型 zip，验证 `output.fresh`。
+- [x] 4. jank-100ms-analysis：第一个 zip 产物，验证 `entry` 列表和去顶层目录。
+- [x] 5. dynamic_model_tools：目录型 zip，验证 `output.fresh`。
 
 宿主侧只有两件事：往 `catalog.json` 加条目；修掉接入过程中暴露的清单表达力不足（改规范要先改 `tool-manifest.md`）。
 

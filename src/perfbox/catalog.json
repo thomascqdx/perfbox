@@ -34,6 +34,20 @@
       "summary": "对比两个版本的 cat_meminfo 采样，输出单文件 HTML 报告",
       "domain": "memory",
       "github": "thomascqdx/meminfo_diff"
+    },
+    {
+      "id": "jank-analyzer",
+      "title": "100ms 卡顿主线程分析",
+      "summary": "批量分析 100ms 级卡顿 trace 的主线程耗时，输出 Markdown 报告与 CSV",
+      "domain": "jank",
+      "github": "thomascqdx/jank-100ms-analysis"
+    },
+    {
+      "id": "startup-latency",
+      "title": "启动时延一致性分析",
+      "summary": "批量分析启动时延测试表格，定位偏离均值的样本，输出报告与 Excel",
+      "domain": "startup",
+      "github": "thomascqdx/dynamic_model_tools"
     }
   ]
 }

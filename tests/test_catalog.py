@@ -7,8 +7,9 @@ from perfbox.catalog import UnknownTool
 def test_entries_contains_memscope_and_perfetto_trim():
     es = catalog.entries()
     assert [e.id for e in es] == ["memscope", "perfetto-trim", "blkscope",
-                                "vmscope", "meminfo-diff"]
-    m, p, b, v, mi = es
+                                "vmscope", "meminfo-diff", "jank-analyzer",
+                                "startup-latency"]
+    m, p, b, v, mi, j, s = es
     assert m.title == "内存测试包 A/B 对比"
     assert m.summary == "对比两个内存测试包，输出 HTML、Markdown 和 Excel 报告"
     assert m.domain == "memory" and m.github == "thomascqdx/memscope"
@@ -24,6 +25,12 @@ def test_entries_contains_memscope_and_perfetto_trim():
     assert mi.title == "meminfo 双版本对比"
     assert mi.summary == "对比两个版本的 cat_meminfo 采样，输出单文件 HTML 报告"
     assert mi.domain == "memory" and mi.github == "thomascqdx/meminfo_diff"
+    assert j.title == "100ms 卡顿主线程分析"
+    assert j.summary == "批量分析 100ms 级卡顿 trace 的主线程耗时，输出 Markdown 报告与 CSV"
+    assert j.domain == "jank" and j.github == "thomascqdx/jank-100ms-analysis"
+    assert s.title == "启动时延一致性分析"
+    assert s.summary == "批量分析启动时延测试表格，定位偏离均值的样本，输出报告与 Excel"
+    assert s.domain == "startup" and s.github == "thomascqdx/dynamic_model_tools"
 
 
 def test_get():
