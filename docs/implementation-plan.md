@@ -372,10 +372,10 @@ perfbox manifest check <file>   校验一份清单
 
 ### M5 打包与分发 → v0.5.0
 
-- [ ] 1. `scripts/perfbox_entry.py`、`scripts/build_exe.ps1`、`build.bat`：PyInstaller 6.17.0 单文件，静态资源打入，结束时做 `--version` 自检。做法照 perfetto-trim 的 `build.bat`。
-- [ ] 2. `perfbox export <dir>`：把已装工具写成目录源布局，用于共享盘和离线分发。
-- [ ] 3. 宿主新版提示：查 `releases/latest` 的重定向目标，与 `__version__` 比较，界面给出下载链接。
-- [ ] 4. `README.md`：面向同事的使用说明——下载、首次运行、结果在哪里、配置共享盘源、离线使用。
+- [x] 1. `scripts/perfbox_entry.py`、`scripts/build_exe.ps1`、`build.bat`：PyInstaller 6.17.0 单文件，静态资源打入，结束时做 `--version` 自检。做法照 perfetto-trim 的 `build.bat`。
+- [x] 2. `perfbox export <dir>`：把已装工具写成目录源布局，用于共享盘和离线分发。
+- [x] 3. 宿主新版提示：查 `releases/latest` 的重定向目标，与 `__version__` 比较，界面给出下载链接。
+- [x] 4. `README.md`：面向同事的使用说明——下载、首次运行、结果在哪里、配置共享盘源、离线使用。
 - [ ] 5. 创建 perfbox 的 GitHub release，附件为固定文件名 `perfbox.exe`。
 
 验收：
